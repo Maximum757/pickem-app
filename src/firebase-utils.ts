@@ -636,24 +636,113 @@ export async function submitTiebreakerGuess(
 /**
  * Set weekly tiebreaker (commissioner only)
  */
-export async function setWeeklyTiebreaker(
+/**
+ * Set (or update) this week's tiebreaker question and rule. Deliberately
+ * does NOT require an answer — the actual correct answer usually isn't
+ * knowable until the relevant game finishes, well after players need to
+ * start guessing. Preserves an existing answer/locked state if the doc
+ * already exists (so re-editing the question text doesn't wipe out an
+ * answer that's already been recorded).
+ */
+export async function setWeeklyTiebreakerQuestion(
   leagueId: string,
   week: number,
   question: string,
-  answer: number,
   rule: "closest" | "closest_without_going_over",
   commissionerId: string
 ): Promise<void> {
   const tiebreakerRef = doc(db, `leagues/${leagueId}/weeklyTiebreakers/${week}`);
-  await setDoc(tiebreakerRef, {
-    leagueId,
-    week,
-    question,
-    answer,
-    rule,
-    enteredAt: Timestamp.now(),
-    enteredBy: commissionerId,
-  } as schema.WeeklyTiebreakerDoc);
+  const existing = await getDoc(tiebreakerRef);
+  await setDoc(
+    tiebreakerRef,
+    {
+      leagueId,
+      week,
+      question,
+      rule,
+      answer: existing.exists() ? (existing.data() as schema.WeeklyTiebreakerDoc).answer : null,
+      locked: existing.exists() ? (existing.data() as schema.WeeklyTiebreakerDoc).locked : false,
+      enteredAt: Timestamp.now(),
+      enteredBy: commissionerId,
+    } as schema.WeeklyTiebreakerDoc
+  );
+}
+
+/**
+ * Record the actual correct answer once it's known (after the relevant
+ * game finishes) — a separate action from setting the question, since
+ * they're never knowable at the same time.
+ */
+export async function setWeeklyTiebreakerAnswer(
+  leagueId: string,
+  week: number,
+  answer: number
+): Promise<void> {
+  const tiebreakerRef = doc(db, `leagues/${leagueId}/weeklyTiebreakers/${week}`);
+  await updateDoc(tiebreakerRef, { answer });
+}
+
+/**
+ * Lock this week's tiebreaker — no more guesses accepted after this (also
+ * enforced server-side, see firestore.rules). Before locking, backfills a
+ * guess for anyone who never submitted one, carried forward from their most
+ * recent prior week's guess (if they have one) — so someone who reliably
+ * enters guesses early in the season doesn't lose their shot at the
+ * tiebreaker just because they forgot one particular week.
+ */
+export async function lockTiebreaker(leagueId: string, week: number): Promise<void> {
+  const [players, thisWeekGuesses] = await Promise.all([
+    getPlayers(leagueId),
+    getAllTiebreakerGuessesForWeek(leagueId, week),
+  ]);
+
+  const alreadyGuessed = new Set(thisWeekGuesses.map((g) => g.playerId));
+  const missing = players.filter((p) => !alreadyGuessed.has(p.id));
+
+  if (missing.length > 0) {
+    // Pull every prior-week guess for the missing players in one query,
+    // then pick each player's most recent one client-side — cheaper than
+    // one query per missing player.
+    const priorGuessesSnap = await getDocs(
+      query(collection(db, `leagues/${leagueId}/tiebreakerGuesses`), where("week", "<", week))
+    );
+    const priorGuesses = priorGuessesSnap.docs.map((d) => d.data() as schema.TiebreakerGuessDoc);
+
+    const batch = writeBatch(db);
+    missing.forEach((player) => {
+      const theirPriorGuesses = priorGuesses
+        .filter((g) => g.playerId === player.id)
+        .sort((a, b) => b.week - a.week);
+      if (theirPriorGuesses.length === 0) return; // nothing to carry forward
+      const mostRecent = theirPriorGuesses[0];
+      const guessId = schema.getTiebreakerGuessId(player.id, week);
+      const guessRef = doc(db, `leagues/${leagueId}/tiebreakerGuesses`, guessId);
+      batch.set(guessRef, {
+        id: guessId,
+        leagueId,
+        playerId: player.id,
+        week,
+        guess: mostRecent.guess,
+        submittedAt: Timestamp.now(),
+        carriedForward: true,
+      } as schema.TiebreakerGuessDoc);
+    });
+    await batch.commit();
+  }
+
+  const tiebreakerRef = doc(db, `leagues/${leagueId}/weeklyTiebreakers/${week}`);
+  await updateDoc(tiebreakerRef, { locked: true });
+}
+
+/**
+ * Manually unlock a tiebreaker (e.g. the commissioner locked it too early
+ * by mistake). Does NOT undo any carried-forward guesses lockTiebreaker()
+ * already wrote — those stay as real guesses unless someone overwrites
+ * them, which is the same behavior as a normal guess once entered.
+ */
+export async function unlockTiebreaker(leagueId: string, week: number): Promise<void> {
+  const tiebreakerRef = doc(db, `leagues/${leagueId}/weeklyTiebreakers/${week}`);
+  await updateDoc(tiebreakerRef, { locked: false });
 }
 
 /**

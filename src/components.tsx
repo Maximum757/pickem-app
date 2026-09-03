@@ -106,6 +106,7 @@ export function PicksScreen() {
     loading,
     submitSinglePick,
     tiebreakerQuestion,
+    tiebreakerLocked,
     myTiebreakerGuess,
     submitMyTiebreakerGuess,
   } = useLeague();
@@ -117,6 +118,7 @@ export function PicksScreen() {
   };
 
   const handleTiebreakerBlur = () => {
+    if (tiebreakerLocked) return;
     const val = parseFloat(tbDraft);
     if (!isNaN(val) && val !== myTiebreakerGuess) {
       submitMyTiebreakerGuess(val);
@@ -181,9 +183,13 @@ export function PicksScreen() {
             value={tbDraft}
             onChange={(e) => setTbDraft(e.target.value)}
             onBlur={handleTiebreakerBlur}
-            className="w-24 border rounded px-2 py-1"
+            disabled={tiebreakerLocked}
+            className="w-24 border rounded px-2 py-1 disabled:bg-gray-100 disabled:text-gray-500"
           />
           {tbSaved && <span className="text-xs text-green-600">✓ Saved</span>}
+          {tiebreakerLocked && (
+            <span className="text-xs font-semibold text-gray-500">🔒 Locked</span>
+          )}
         </div>
       </div>
 
@@ -480,7 +486,12 @@ export function CommissionerDashboard() {
     setCurrentWeek,
     advanceToWeek,
     enterGameResult,
-    setTiebreaker,
+    tiebreakerQuestion,
+    tiebreakerLocked,
+    setTiebreakerQuestion,
+    setTiebreakerAnswer,
+    lockTiebreaker,
+    unlockTiebreaker,
   } = useLeague();
   const [selectedGame, setSelectedGame] = useState<string | null>(null);
   const [result, setResult] = useState<{
@@ -490,7 +501,7 @@ export function CommissionerDashboard() {
     loserScore: number;
   } | null>(null);
   const [tiebreakerQ, setTiebreakerQ] = useState("");
-  const [tiebreakerA, setTiebreakerA] = useState("");
+  const [tiebreakerAnswerDraft, setTiebreakerAnswerDraft] = useState("");
   const [tiebreakerRule, setTiebreakerRule] = useState<"closest" | "closest_without_going_over">(
     "closest"
   );
@@ -542,11 +553,24 @@ export function CommissionerDashboard() {
     setResult(null);
   };
 
-  const handleSetTiebreaker = async () => {
-    if (!tiebreakerQ || !tiebreakerA) return;
-    await setTiebreaker(currentWeek, tiebreakerQ, parseInt(tiebreakerA), tiebreakerRule);
+  const handleSetTiebreakerQuestion = async () => {
+    if (!tiebreakerQ) return;
+    await setTiebreakerQuestion(currentWeek, tiebreakerQ, tiebreakerRule);
     setTiebreakerQ("");
-    setTiebreakerA("");
+  };
+
+  const handleSetTiebreakerAnswer = async () => {
+    if (!tiebreakerAnswerDraft) return;
+    await setTiebreakerAnswer(currentWeek, parseFloat(tiebreakerAnswerDraft));
+    setTiebreakerAnswerDraft("");
+  };
+
+  const handleToggleLock = async () => {
+    if (tiebreakerLocked) {
+      await unlockTiebreaker(currentWeek);
+    } else {
+      await lockTiebreaker(currentWeek);
+    }
   };
 
   if (loading) return <div className="p-4">Loading...</div>;
@@ -683,27 +707,35 @@ export function CommissionerDashboard() {
 
       {/* Tiebreaker Section */}
       <div className="mb-8 border p-4 rounded bg-yellow-50">
-        <h3 className="text-lg font-bold mb-4">Set Weekly Tiebreaker</h3>
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-lg font-bold">Weekly Tiebreaker</h3>
+          {tiebreakerLocked ? (
+            <span className="text-xs font-bold px-2 py-1 rounded-full bg-gray-200 text-gray-700">
+              🔒 Locked
+            </span>
+          ) : tiebreakerQuestion ? (
+            <span className="text-xs font-bold px-2 py-1 rounded-full bg-green-100 text-green-700">
+              Open
+            </span>
+          ) : null}
+        </div>
 
-        <div className="space-y-3">
+        <div className="space-y-3 mb-4">
+          <p className="text-xs text-gray-600">
+            Set the question now — you don't need to know the correct answer yet.
+            Record that separately once the relevant game finishes.
+          </p>
           <div>
-            <label className="block text-sm font-medium mb-2">Tiebreaker Question</label>
+            <label className="block text-sm font-medium mb-2">
+              Question {tiebreakerQuestion && <span className="font-normal text-gray-500">(current: "{tiebreakerQuestion}")</span>}
+            </label>
             <input
               type="text"
-              placeholder="e.g., Mahomes passing yards"
+              placeholder="e.g., Total combined points, Patriots @ Seahawks"
               value={tiebreakerQ}
               onChange={(e) => setTiebreakerQ(e.target.value)}
-              className="w-full border p-2 rounded"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2">Correct Answer</label>
-            <input
-              type="number"
-              value={tiebreakerA}
-              onChange={(e) => setTiebreakerA(e.target.value)}
-              className="w-full border p-2 rounded"
+              disabled={tiebreakerLocked}
+              className="w-full border p-2 rounded disabled:bg-gray-100"
             />
           </div>
 
@@ -714,7 +746,8 @@ export function CommissionerDashboard() {
               onChange={(e) =>
                 setTiebreakerRule(e.target.value as "closest" | "closest_without_going_over")
               }
-              className="w-full border p-2 rounded"
+              disabled={tiebreakerLocked}
+              className="w-full border p-2 rounded disabled:bg-gray-100"
             >
               <option value="closest">Closest</option>
               <option value="closest_without_going_over">Closest Without Going Over</option>
@@ -722,11 +755,55 @@ export function CommissionerDashboard() {
           </div>
 
           <button
-            onClick={handleSetTiebreaker}
-            className="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded"
+            onClick={handleSetTiebreakerQuestion}
+            disabled={tiebreakerLocked || !tiebreakerQ}
+            className="w-full bg-yellow-500 hover:bg-yellow-600 disabled:bg-gray-300 text-white font-bold py-2 px-4 rounded"
           >
-            Set Tiebreaker
+            {tiebreakerQuestion ? "Update Question" : "Set Question"}
           </button>
+        </div>
+
+        <div className="border-t pt-3 space-y-2">
+          <label className="block text-sm font-medium">Record Correct Answer</label>
+          <p className="text-xs text-gray-500">
+            Fill this in once you actually know it — usually after the relevant game
+            finishes. Players never see this value.
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="number"
+              placeholder="Actual result"
+              value={tiebreakerAnswerDraft}
+              onChange={(e) => setTiebreakerAnswerDraft(e.target.value)}
+              className="flex-1 border p-2 rounded text-sm"
+            />
+            <button
+              onClick={handleSetTiebreakerAnswer}
+              disabled={!tiebreakerAnswerDraft}
+              className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white font-semibold py-2 px-4 rounded text-sm"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+
+        <div className="border-t pt-3 mt-3">
+          <button
+            onClick={handleToggleLock}
+            className={`w-full font-bold py-2 px-4 rounded text-sm ${
+              tiebreakerLocked
+                ? "bg-gray-200 hover:bg-gray-300 text-gray-800"
+                : "bg-red-500 hover:bg-red-600 text-white"
+            }`}
+          >
+            {tiebreakerLocked ? "Unlock Tiebreaker" : "Lock Tiebreaker"}
+          </button>
+          {!tiebreakerLocked && (
+            <p className="text-xs text-gray-500 mt-1">
+              Locking stops new guesses and automatically fills in a guess (carried
+              forward from their last submitted week) for anyone who never entered one.
+            </p>
+          )}
         </div>
       </div>
 

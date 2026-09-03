@@ -33,7 +33,15 @@ interface LeagueContextType {
   submitMyTiebreakerGuess: (guess: number) => Promise<void>;
   enterGameResult: (gameId: string, winner: string, loser: string, winnerScore: number, loserScore: number) => Promise<void>;
   scoreWeek: (week: number) => Promise<void>;
-  setTiebreaker: (week: number, question: string, answer: number, rule: "closest" | "closest_without_going_over") => Promise<void>;
+  setTiebreakerQuestion: (
+    week: number,
+    question: string,
+    rule: "closest" | "closest_without_going_over"
+  ) => Promise<void>;
+  setTiebreakerAnswer: (week: number, answer: number) => Promise<void>;
+  lockTiebreaker: (week: number) => Promise<void>;
+  unlockTiebreaker: (week: number) => Promise<void>;
+  tiebreakerLocked: boolean;
   reorderGames: (orderedGameIds: string[]) => Promise<void>;
   updateGameSchedule: (gameId: string, gameTime: Date | null, timeTBD: boolean) => Promise<void>;
   setManualLock: (gameId: string, locked: boolean) => Promise<void>;
@@ -116,6 +124,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     [gameId: string]: { isCorrect?: boolean; pointsAwarded?: number };
   }>({});
   const [tiebreakerQuestion, setTiebreakerQuestion] = useState<string | null>(null);
+  const [tiebreakerLocked, setTiebreakerLocked] = useState(false);
   const [myTiebreakerGuess, setMyTiebreakerGuess] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -196,6 +205,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
       try {
         const tb = await firebaseUtils.getWeeklyTiebreaker(leagueId, currentWeek);
         setTiebreakerQuestion(tb?.question ?? null);
+        setTiebreakerLocked(tb?.locked ?? false);
 
         const myGuess = await firebaseUtils.getPlayerTiebreakerGuess(leagueId, playerId, currentWeek);
         setMyTiebreakerGuess(myGuess?.guess ?? null);
@@ -305,20 +315,52 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const handleSetTiebreaker = async (
+  const handleSetTiebreakerQuestion = async (
     week: number,
     question: string,
-    answer: number,
     rule: "closest" | "closest_without_going_over"
   ) => {
     if (!leagueId) return;
     try {
       setLoading(true);
-      await firebaseUtils.setWeeklyTiebreaker(leagueId, week, question, answer, rule, playerId || "");
+      await firebaseUtils.setWeeklyTiebreakerQuestion(leagueId, week, question, rule, playerId || "");
+      if (week === currentWeek) setTiebreakerQuestion(question);
     } catch (err) {
       setError(`Failed to set tiebreaker: ${err}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSetTiebreakerAnswer = async (week: number, answer: number) => {
+    if (!leagueId) return;
+    try {
+      await firebaseUtils.setWeeklyTiebreakerAnswer(leagueId, week, answer);
+    } catch (err) {
+      setError(`Failed to record tiebreaker answer: ${err}`);
+    }
+  };
+
+  const handleLockTiebreaker = async (week: number) => {
+    if (!leagueId) return;
+    try {
+      setLoading(true);
+      await firebaseUtils.lockTiebreaker(leagueId, week);
+      if (week === currentWeek) setTiebreakerLocked(true);
+    } catch (err) {
+      setError(`Failed to lock tiebreaker: ${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUnlockTiebreaker = async (week: number) => {
+    if (!leagueId) return;
+    try {
+      await firebaseUtils.unlockTiebreaker(leagueId, week);
+      if (week === currentWeek) setTiebreakerLocked(false);
+    } catch (err) {
+      setError(`Failed to unlock tiebreaker: ${err}`);
     }
   };
 
@@ -397,6 +439,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         userPicks,
         userPickResults,
         tiebreakerQuestion,
+        tiebreakerLocked,
         myTiebreakerGuess,
         loading,
         error,
@@ -410,7 +453,10 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         submitMyTiebreakerGuess: handleSubmitMyTiebreakerGuess,
         enterGameResult: handleEnterGameResult,
         scoreWeek: handleScoreWeek,
-        setTiebreaker: handleSetTiebreaker,
+        setTiebreakerQuestion: handleSetTiebreakerQuestion,
+        setTiebreakerAnswer: handleSetTiebreakerAnswer,
+        lockTiebreaker: handleLockTiebreaker,
+        unlockTiebreaker: handleUnlockTiebreaker,
         reorderGames: handleReorderGames,
         updateGameSchedule: handleUpdateGameSchedule,
         setManualLock: handleSetManualLock,

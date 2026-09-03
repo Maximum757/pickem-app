@@ -123,6 +123,10 @@ export interface TiebreakerGuessDoc {
   week: number;
   guess: number;
   submittedAt: Timestamp;
+  // True when this guess was auto-filled at lock time because the player
+  // never submitted one — carried forward from their most recent prior
+  // week's guess. False/absent for a guess the player actually entered.
+  carriedForward?: boolean;
 }
 
 export function getTiebreakerGuessId(playerId: string, week: number): string {
@@ -154,11 +158,16 @@ export interface WeeklyTiebreakerDoc {
   leagueId: string;
   week: number;
   question: string; // "Mahomes passing yards", "Total score", etc.
-  answer: number; // Commissioner's answer
+  answer: number | null; // The correct answer — usually not known when the
+                          // question is set, only once the relevant game
+                          // finishes. Question/rule can be set independently
+                          // of this ever being filled in.
   rule: "closest" | "closest_without_going_over";
+  locked: boolean; // Once true, no new/changed guesses are accepted — see
+                    // lockTiebreaker() in firebase-utils.ts, which also
+                    // backfills anyone missing a guess from their last one.
   enteredAt: Timestamp;
   enteredBy: string; // Commissioner ID
-  playerGuesses?: Map<string, number>; // playerId -> their guess (if applicable)
 }
 
 /**

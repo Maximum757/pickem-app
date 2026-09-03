@@ -38,6 +38,14 @@ service cloud.firestore {
         (g.gameTime == null || request.time < g.gameTime);
     }
 
+    // A tiebreaker is open for guesses if no question has been set yet for
+    // that week (nothing to lock), or it exists and hasn't been explicitly
+    // locked by the commissioner (see lockTiebreaker() in firebase-utils.ts).
+    function tiebreakerOpen(leagueId, week) {
+      let path = /databases/$(database)/documents/leagues/$(leagueId)/weeklyTiebreakers/$(string(week));
+      return !exists(path) || get(path).data.locked != true;
+    }
+
     match /leagues/{leagueId} {
       allow read: if isSignedIn();
       allow write: if isCommissioner(leagueId);
@@ -71,12 +79,24 @@ service cloud.firestore {
       }
 
       match /tiebreakerGuesses/{guessId} {
-        // A player can read/write only their own guess (id is `${uid}_${week}`).
-        allow read, create, update: if isSignedIn() &&
-          guessId.matches(request.auth.uid + '_.*');
+        // A player can read only their own guess (id is `${uid}_${week}`).
+        allow read: if isSignedIn() && guessId.matches(request.auth.uid + '_.*');
         // Commissioner can read all guesses (to show "X / Y entered" —
         // never the guess values themselves in that view).
         allow read: if isCommissioner(leagueId);
+
+        // A player can create/update their OWN guess, but only while that
+        // week's tiebreaker isn't locked yet.
+        allow create, update: if isSignedIn() &&
+          guessId.matches(request.auth.uid + '_.*') &&
+          tiebreakerOpen(leagueId, request.resource.data.week);
+
+        // The commissioner can write ANY guess doc, lock or not — needed for
+        // lockTiebreaker()'s carry-forward backfill, which writes guesses on
+        // behalf of players who never submitted one themselves. Without this
+        // branch, that backfill would silently fail for every player except
+        // the commissioner's own guess.
+        allow create, update: if isCommissioner(leagueId);
       }
 
       match /picks/{pickId} {
