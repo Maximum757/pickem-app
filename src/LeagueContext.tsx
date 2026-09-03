@@ -18,7 +18,10 @@ interface LeagueContextType {
   userPicks: { [gameId: string]: string };
   userPickResults: { [gameId: string]: { isCorrect?: boolean; pointsAwarded?: number } };
   tiebreakerQuestion: string | null;
+  tiebreakerRule: "closest" | "closest_without_going_over" | null;
   myTiebreakerGuess: number | null;
+  weeklyLeader: { playerId: string; name: string; points: number } | null;
+  leagueMaxWeeklyPoints: number | null;
   loading: boolean;
   error: string | null;
 
@@ -111,6 +114,47 @@ function buildPickResultsMap(
   return map;
 }
 
+// The cached standings doc only reflects whoever existed the last time a
+// game was scored — a brand-new signup after that point won't be in it
+// until the next scoring run, which might not happen for a while (or ever,
+// if nobody's entered a result yet). Rather than have new players simply
+// missing from Standings until then, merge in anyone from the live roster
+// who isn't already in the cached list, at 0 points, then re-sort/re-rank
+// using the same tiebreak order the real scoring uses (points, then correct
+// picks, then best week, then second-best week).
+function mergeStandingsWithRoster(
+  cached: schema.UIStanding[],
+  players: schema.PlayerDoc[]
+): schema.UIStanding[] {
+  const present = new Set(cached.map((s) => s.playerId));
+  const withMissing = [...cached];
+  players.forEach((p) => {
+    if (!present.has(p.id)) {
+      withMissing.push({
+        rank: 0,
+        playerId: p.id,
+        playerName: p.name,
+        totalPoints: 0,
+        totalCorrect: 0,
+        highestWeek: null,
+        secondHighestWeek: null,
+      });
+    }
+  });
+
+  withMissing.sort((a, b) => {
+    if (a.totalPoints !== b.totalPoints) return b.totalPoints - a.totalPoints;
+    if (a.totalCorrect !== b.totalCorrect) return b.totalCorrect - a.totalCorrect;
+    const aHigh = a.highestWeek ?? 0;
+    const bHigh = b.highestWeek ?? 0;
+    if (aHigh !== bHigh) return bHigh - aHigh;
+    return (b.secondHighestWeek ?? 0) - (a.secondHighestWeek ?? 0);
+  });
+
+  return withMissing.map((s, i) => ({ ...s, rank: i + 1 }));
+}
+
+
 export function LeagueProvider({ children }: { children: React.ReactNode }) {
   const [leagueId, setLeagueId] = useState<string | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
@@ -125,6 +169,12 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
   }>({});
   const [tiebreakerQuestion, setTiebreakerQuestion] = useState<string | null>(null);
   const [tiebreakerLocked, setTiebreakerLocked] = useState(false);
+  const [tiebreakerRule, setTiebreakerRule] = useState<
+    "closest" | "closest_without_going_over" | null
+  >(null);
+  const [weeklyLeader, setWeeklyLeader] = useState<
+    { playerId: string; name: string; points: number } | null
+  >(null);
   const [myTiebreakerGuess, setMyTiebreakerGuess] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,7 +206,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         setPlayers(playersData);
 
         const standingsData = await firebaseUtils.getStandings(leagueId, leagueData?.season || new Date().getFullYear());
-        setStandings(standingsData);
+        setStandings(mergeStandingsWithRoster(standingsData, playersData));
       } catch (err) {
         setError(`Failed to load league: ${err}`);
       } finally {
@@ -206,6 +256,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         const tb = await firebaseUtils.getWeeklyTiebreaker(leagueId, currentWeek);
         setTiebreakerQuestion(tb?.question ?? null);
         setTiebreakerLocked(tb?.locked ?? false);
+        setTiebreakerRule(tb?.rule ?? null);
 
         const myGuess = await firebaseUtils.getPlayerTiebreakerGuess(leagueId, playerId, currentWeek);
         setMyTiebreakerGuess(myGuess?.guess ?? null);
@@ -214,6 +265,35 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
       }
     })();
   }, [leagueId, playerId, currentWeek]);
+
+  // Load this week's public per-player point totals so the picks screen can
+  // show a live "weekly leader" — the aggregate is public the same way
+  // season standings are; it just never reveals what anyone actually picked.
+  useEffect(() => {
+    if (!leagueId || currentWeek == null) return;
+
+    (async () => {
+      try {
+        const scores = await firebaseUtils.getWeeklyScores(leagueId, currentWeek);
+        if (!scores || scores.length === 0) {
+          setWeeklyLeader(null);
+          return;
+        }
+        const top = scores.reduce((best: any, s: any) =>
+          !best || s.pointsAfterMultiplier > best.pointsAfterMultiplier ? s : best
+        );
+        if (top && top.pointsAfterMultiplier > 0) {
+          setWeeklyLeader({ playerId: top.playerId, name: top.playerName, points: top.pointsAfterMultiplier });
+        } else {
+          setWeeklyLeader(null);
+        }
+      } catch (err) {
+        // Not worth surfacing as a page-level error — this is a nice-to-have
+        // stat, not something that should block the rest of the page.
+        setWeeklyLeader(null);
+      }
+    })();
+  }, [leagueId, currentWeek]);
 
   // Actions
   const handleSubmitPicks = async (picks: Array<{ gameId: string; pickedTeam: string }>) => {
@@ -275,6 +355,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
       await firebaseUtils.enterGameResult(
         leagueId,
         gameId,
+        gameDoc?.week ?? currentWeek,
         winner,
         loser,
         winnerScore,
@@ -291,7 +372,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         leagueId,
         leagueData?.season || new Date().getFullYear()
       );
-      setStandings(standingsData);
+      setStandings(mergeStandingsWithRoster(standingsData, players));
     } catch (err) {
       setError(`Failed to enter result: ${err}`);
     } finally {
@@ -307,7 +388,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
       // Reload standings
       const leagueData = await firebaseUtils.getLeague(leagueId);
       const standingsData = await firebaseUtils.getStandings(leagueId, leagueData?.season || new Date().getFullYear());
-      setStandings(standingsData);
+      setStandings(mergeStandingsWithRoster(standingsData, players));
     } catch (err) {
       setError(`Failed to score week: ${err}`);
     } finally {
@@ -439,8 +520,14 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         userPicks,
         userPickResults,
         tiebreakerQuestion,
+        tiebreakerRule,
         tiebreakerLocked,
         myTiebreakerGuess,
+        weeklyLeader,
+        leagueMaxWeeklyPoints:
+          standings.length > 0
+            ? Math.max(...standings.map((s) => s.highestWeek ?? 0))
+            : null,
         loading,
         error,
         setLeagueId,

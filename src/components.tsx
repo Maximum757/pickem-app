@@ -106,9 +106,13 @@ export function PicksScreen() {
     loading,
     submitSinglePick,
     tiebreakerQuestion,
+    tiebreakerRule,
     tiebreakerLocked,
     myTiebreakerGuess,
     submitMyTiebreakerGuess,
+    weeklyLeader,
+    leagueMaxWeeklyPoints,
+    playerId,
   } = useLeague();
   const [tbDraft, setTbDraft] = useState<string>(myTiebreakerGuess?.toString() ?? "");
   const [tbSaved, setTbSaved] = useState(false);
@@ -138,7 +142,6 @@ export function PicksScreen() {
   const picksComplete = totalGames > 0 && picksMade === totalGames;
   const weeklyCorrect = games.filter((g) => userPickResults[g.id]?.isCorrect === true).length;
   const weeklyPoints = games.reduce((sum, g) => sum + (userPickResults[g.id]?.pointsAwarded || 0), 0);
-  const anyFinal = games.some((g) => !!g.result);
 
   return (
     <div className="p-4">
@@ -152,9 +155,18 @@ export function PicksScreen() {
           >
             {picksMade} / {totalGames} picked
           </div>
-          {anyFinal && (
-            <div className="text-xs text-gray-600 mt-1">
-              {weeklyCorrect} correct · {weeklyPoints} pts so far
+          <div className="text-xs text-gray-600 mt-1">
+            {weeklyCorrect} correct · {weeklyPoints} pts so far this week
+          </div>
+          {weeklyLeader && (
+            <div className="text-xs text-gray-500 mt-0.5">
+              {weeklyLeader.playerId === playerId ? "You're" : `${weeklyLeader.name} is`} leading
+              this week ({weeklyLeader.points} pts)
+            </div>
+          )}
+          {leagueMaxWeeklyPoints !== null && leagueMaxWeeklyPoints > 0 && (
+            <div className="text-xs text-gray-400 mt-0.5">
+              League record: {leagueMaxWeeklyPoints} pts in a week
             </div>
           )}
         </div>
@@ -169,13 +181,20 @@ export function PicksScreen() {
         <div className="text-xs uppercase tracking-wide text-gray-500 font-semibold mb-1">
           This week's tiebreaker
         </div>
-        <div className="text-sm font-semibold mb-3">
+        <div className="text-sm font-semibold mb-1">
           {tiebreakerQuestion || (
             <span className="text-gray-500 font-normal italic">
               Not set yet — you can still enter your guess now
             </span>
           )}
         </div>
+        {tiebreakerRule && (
+          <div className="text-xs text-gray-500 mb-3">
+            {tiebreakerRule === "closest_without_going_over"
+              ? "Price Is Right rules: closest without going over wins"
+              : "Closest guess wins (going over is fine)"}
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-600">Enter Tiebreaker ➞➞</span>
           <input

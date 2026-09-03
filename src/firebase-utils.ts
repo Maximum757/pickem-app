@@ -297,9 +297,49 @@ export async function getAllPicksForWeek(leagueId: string, week: number): Promis
  * that step so standings reflect a finished game within seconds, not
  * whenever someone remembers to click a button.
  */
+/**
+ * Recompute the public weekly-scores cache for one week, from every pick
+ * that's been scored so far that week. Used both by scoreGameImmediately
+ * (keeps it live as results come in) and available standalone if it ever
+ * needs a manual refresh. This is what "who's leading this week" and "my
+ * points so far" read from — a player's own picks already tell them their
+ * own total, but seeing where they rank against everyone else needs this
+ * public aggregate, the same way the season standings doc works.
+ */
+export async function recalculateWeeklyScores(leagueId: string, week: number): Promise<void> {
+  const [players, weekPicks] = await Promise.all([
+    getPlayers(leagueId),
+    getAllPicksForWeek(leagueId, week),
+  ]);
+
+  const scores = players.map((player) => {
+    const theirPicks = weekPicks.filter(
+      (p) => p.playerId === player.id && p.pointsAwarded !== undefined
+    );
+    const pointsAfterMultiplier = theirPicks.reduce((sum, p) => sum + (p.pointsAwarded || 0), 0);
+    const gamesCorrect = theirPicks.filter((p) => p.isCorrect).length;
+    return {
+      playerId: player.id,
+      playerName: player.name,
+      gamesCorrect,
+      pointsRaw: pointsAfterMultiplier,
+      pointsAfterMultiplier,
+    };
+  });
+
+  const scoresRef = doc(db, `leagues/${leagueId}/weeklyScores/${week}`);
+  await setDoc(scoresRef, {
+    leagueId,
+    week,
+    scoredAt: Timestamp.now(),
+    scores,
+  } as schema.WeeklyScoresDoc);
+}
+
 export async function scoreGameImmediately(
   leagueId: string,
   gameId: string,
+  week: number,
   winner: string,
   loser: string,
   playoffMultiplier: number
@@ -329,12 +369,14 @@ export async function scoreGameImmediately(
   });
   await batch.commit();
 
+  await recalculateWeeklyScores(leagueId, week);
   await recalculateSeasonStandings(leagueId);
 }
 
 export async function enterGameResult(
   leagueId: string,
   gameId: string,
+  week: number,
   winner: string,
   loser: string,
   winnerScore: number,
@@ -358,7 +400,7 @@ export async function enterGameResult(
   // Score this game and refresh standings immediately — see
   // scoreGameImmediately() for why this no longer waits for a manual
   // "Score Week" action.
-  await scoreGameImmediately(leagueId, gameId, winner, loser, playoffMultiplier);
+  await scoreGameImmediately(leagueId, gameId, week, winner, loser, playoffMultiplier);
 }
 
 /**
