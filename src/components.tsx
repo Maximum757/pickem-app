@@ -44,7 +44,7 @@ function PickTile({
   return (
     <div
       onClick={isClickable ? onClick : undefined}
-      className={`flex-1 rounded-md px-2 py-2.5 text-center font-bold select-none ${borderClass} ${
+      className={`inline-flex flex-col items-center justify-center min-w-[92px] max-w-[200px] rounded-md px-4 py-2.5 text-center font-bold select-none ${borderClass} ${
         isClickable ? "cursor-pointer" : "cursor-not-allowed"
       }`}
       style={{ background: bg, color: fg, border: "5px solid transparent" }}
@@ -340,7 +340,7 @@ export function PicksScreen() {
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center justify-between gap-2">
                 <PickTile
                   abbr={game.awayTeam}
                   isPicked={picked === game.awayTeam}
@@ -727,7 +727,9 @@ export function CommissionerDashboard() {
     lockTiebreaker,
     unlockTiebreaker,
     assignMissedPick,
+    setLeagueMaxPlayers,
   } = useLeague();
+  const [maxPlayersDraft, setMaxPlayersDraft] = useState<string>("");
   const [tiebreakerQ, setTiebreakerQ] = useState("");
   const [tiebreakerAnswerDraft, setTiebreakerAnswerDraft] = useState("");
   const [tiebreakerRule, setTiebreakerRule] = useState<"closest" | "closest_without_going_over">(
@@ -798,7 +800,7 @@ export function CommissionerDashboard() {
 
   if (loading) return <div className="p-4">Loading...</div>;
 
-  const allPlayerIds = players.map((p) => p.id);
+  const allPlayerIds = players.filter((p) => !p.removedFromLeague).map((p) => p.id);
   const tiebreakerMissing = allPlayerIds.filter((id) => !tiebreakerEnteredBy.has(id));
   const isViewingCurrentWeek = league?.currentWeek === currentWeek;
 
@@ -836,6 +838,44 @@ export function CommissionerDashboard() {
             Make Week {currentWeek} current for players
           </button>
         )}
+      </div>
+
+      {/* League Settings */}
+      <div className="mb-6 border p-4 rounded bg-gray-50">
+        <h3 className="text-sm font-bold mb-2">League Settings</h3>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-600">Signup cap:</label>
+          <input
+            type="number"
+            placeholder={league?.maxPlayers != null ? String(league.maxPlayers) : "No cap"}
+            value={maxPlayersDraft}
+            onChange={(e) => setMaxPlayersDraft(e.target.value)}
+            className="w-24 border p-1.5 rounded text-sm"
+          />
+          <button
+            onClick={() => {
+              const parsed = parseInt(maxPlayersDraft);
+              setLeagueMaxPlayers(isNaN(parsed) ? null : parsed);
+              setMaxPlayersDraft("");
+            }}
+            className="text-xs font-semibold text-white bg-blue-500 hover:bg-blue-600 px-3 py-1.5 rounded"
+          >
+            Save
+          </button>
+          {league?.maxPlayers != null && (
+            <button
+              onClick={() => setLeagueMaxPlayers(null)}
+              className="text-xs text-gray-500 hover:text-red-600"
+            >
+              Remove cap
+            </button>
+          )}
+        </div>
+        <p className="text-xs text-gray-500 mt-1">
+          {league?.maxPlayers != null
+            ? `New signups are blocked once the league reaches ${league.maxPlayers} players.`
+            : "No cap set — anyone with the link can sign up."}
+        </p>
       </div>
 
       <ScheduleManager />
@@ -1336,16 +1376,19 @@ type ViewType = "picks" | "mysummary" | "standings" | "commissioner" | "summary"
 // ============================================================================
 
 export function MembersScreen() {
-  const { players, setPlayerPaid } = useLeague();
+  const { players, setPlayerPaid, removePlayer, restorePlayer } = useLeague();
+  const [confirmingRemove, setConfirmingRemove] = useState<string | null>(null);
 
-  const paidCount = players.filter((p) => p.hasPaid).length;
+  const activePlayers = players.filter((p) => !p.removedFromLeague);
+  const removedPlayers = players.filter((p) => p.removedFromLeague);
+  const paidCount = activePlayers.filter((p) => p.hasPaid).length;
 
   return (
     <div className="p-4 max-w-2xl">
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-2xl font-bold">Members</h2>
         <span className="text-xs font-bold px-2 py-1 rounded-full bg-gray-100 text-gray-700">
-          {paidCount} / {players.length} paid
+          {paidCount} / {activePlayers.length} paid
         </span>
       </div>
       <p className="text-sm text-gray-600 mb-4">
@@ -1353,7 +1396,7 @@ export function MembersScreen() {
       </p>
 
       <div className="space-y-2">
-        {players.map((p) => (
+        {activePlayers.map((p) => (
           <div
             key={p.id}
             className="flex items-center justify-between border rounded bg-white px-3 py-2"
@@ -1362,22 +1405,78 @@ export function MembersScreen() {
               <div className="text-sm font-semibold">{p.name}</div>
               <div className="text-xs text-gray-500">{p.email}</div>
             </div>
-            <button
-              onClick={() => setPlayerPaid(p.id, !p.hasPaid)}
-              className={`text-xs font-bold px-3 py-1.5 rounded-full ${
-                p.hasPaid
-                  ? "bg-green-100 text-green-700"
-                  : "bg-red-100 text-red-700"
-              }`}
-            >
-              {p.hasPaid ? "✓ Paid" : "Not paid"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPlayerPaid(p.id, !p.hasPaid)}
+                className={`text-xs font-bold px-3 py-1.5 rounded-full ${
+                  p.hasPaid
+                    ? "bg-green-100 text-green-700"
+                    : "bg-red-100 text-red-700"
+                }`}
+              >
+                {p.hasPaid ? "✓ Paid" : "Not paid"}
+              </button>
+              {confirmingRemove === p.id ? (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => {
+                      removePlayer(p.id);
+                      setConfirmingRemove(null);
+                    }}
+                    className="text-xs font-bold px-2 py-1.5 rounded bg-red-600 text-white"
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    onClick={() => setConfirmingRemove(null)}
+                    className="text-xs text-gray-500 px-1"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmingRemove(p.id)}
+                  className="text-xs text-gray-400 hover:text-red-600"
+                  title="Remove from league"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
           </div>
         ))}
-        {players.length === 0 && (
+        {activePlayers.length === 0 && (
           <p className="text-sm text-gray-500">No members yet.</p>
         )}
       </div>
+
+      {removedPlayers.length > 0 && (
+        <div className="mt-6">
+          <h3 className="text-sm font-semibold text-gray-500 mb-2">
+            Removed ({removedPlayers.length})
+          </h3>
+          <div className="space-y-2">
+            {removedPlayers.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between border rounded bg-gray-50 px-3 py-2"
+              >
+                <div>
+                  <div className="text-sm font-semibold text-gray-500">{p.name}</div>
+                  <div className="text-xs text-gray-400">{p.email}</div>
+                </div>
+                <button
+                  onClick={() => restorePlayer(p.id)}
+                  className="text-xs font-semibold text-blue-600"
+                >
+                  Restore
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

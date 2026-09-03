@@ -26,7 +26,7 @@ import {
   updateProfile,
   User,
 } from "firebase/auth";
-import { doc, setDoc, getDoc, Timestamp } from "firebase/firestore";
+import { doc, setDoc, getDoc, collection, query, where, getDocs, Timestamp } from "firebase/firestore";
 import { db } from "./firebase-utils";
 
 interface AuthContextType {
@@ -59,6 +59,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const auth = getAuth();
       const credential = await createUserWithEmailAndPassword(auth, email, password);
+
+      // Check the signup cap AFTER creating the auth account, not before —
+      // reading the league doc requires being signed in (see firestore.rules),
+      // so this can't run any earlier. If it fails, delete the just-created
+      // account rather than leave an orphaned auth user with no player doc —
+      // exactly the class of bug that caused the original player-doc
+      // creation issue earlier in this project. This check is client-side
+      // only, not a Firestore rule — a determined user could bypass it by
+      // editing the request directly. For a small trusted league that's an
+      // acceptable tradeoff; a hard server-side cap would need either a
+      // Cloud Function or a rules-level atomic counter, neither of which
+      // exists here.
+      const leagueSnap = await getDoc(doc(db, "leagues", leagueId));
+      const league = leagueSnap.exists() ? leagueSnap.data() : null;
+      if (league?.maxPlayers != null) {
+        const playersSnap = await getDocs(collection(db, `leagues/${leagueId}/players`));
+        const activeCount = playersSnap.docs.filter((d) => !d.data().removedFromLeague).length;
+        if (activeCount >= league.maxPlayers) {
+          await credential.user.delete();
+          throw new Error(
+            `This league is full (${league.maxPlayers} player cap). Ask the commissioner about a spot.`
+          );
+        }
+      }
 
       // Set this on the Firebase Auth account itself, not just the Firestore
       // player doc below — this is what AuthGate's self-healing ensurePlayerDoc

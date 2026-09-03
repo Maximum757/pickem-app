@@ -28,6 +28,10 @@ export interface LeagueDoc {
   season: number; // 2025, etc.
   commissionerId: string;
   playerCount: number;
+  maxPlayers?: number | null; // Signup cap set by the commissioner — null/absent
+                               // means no cap. Enforced client-side at signup
+                               // (see AuthContext.signUp) — not a hard server-side
+                               // guarantee; see the note in that function.
   currentWeek: number; // The week players/commissioner see by default on open.
                         // Advanced explicitly by the commissioner (setLeagueCurrentWeek) —
                         // not inferred from wall-clock time, since bye weeks and a
@@ -50,6 +54,10 @@ export interface PlayerDoc {
   joinedAt: Timestamp;
   isWildcardPicker: boolean; // True if this is youngest son (auto-fills missed picks)
   hasPaid?: boolean; // Dues tracking — commissioner-set, defaults to unpaid
+  removedFromLeague?: boolean; // Soft-remove ("boot") — see removePlayerFromLeague()
+                                // in firebase-utils.ts. Never hard-delete the doc:
+                                // AuthGate's self-heal recreates a missing player doc
+                                // on next login, which would silently un-boot them.
 }
 
 /**
@@ -377,6 +385,7 @@ export interface UILeague {
   name: string;
   season: number;
   playerCount: number;
+  maxPlayers?: number | null;
   commissionerId: string;
   currentWeek: number;
 }

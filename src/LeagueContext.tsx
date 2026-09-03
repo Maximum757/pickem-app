@@ -33,6 +33,9 @@ interface LeagueContextType {
   updateMyName: (name: string) => Promise<void>;
   assignMissedPick: (gameId: string, playerId: string, pickedTeam: string) => Promise<void>;
   setPlayerPaid: (playerId: string, hasPaid: boolean) => Promise<void>;
+  removePlayer: (playerId: string) => Promise<void>;
+  restorePlayer: (playerId: string) => Promise<void>;
+  setLeagueMaxPlayers: (maxPlayers: number | null) => Promise<void>;
   myWeekLocked: boolean;
   setMyWeekLocked: (locked: boolean) => Promise<void>;
   submitPicks: (picks: Array<{ gameId: string; pickedTeam: string }>) => Promise<void>;
@@ -130,9 +133,20 @@ function mergeStandingsWithRoster(
   cached: schema.UIStanding[],
   players: schema.PlayerDoc[]
 ): schema.UIStanding[] {
-  const present = new Set(cached.map((s) => s.playerId));
-  const withMissing = [...cached];
-  players.forEach((p) => {
+  const activePlayers = players.filter((p) => !p.removedFromLeague);
+  const activeIds = new Set(activePlayers.map((p) => p.id));
+  // Drop anyone booted from the league, even if they're already in the
+  // cached doc from before they were removed — a boot should actually
+  // disappear them from standings, not just stop new points accruing.
+  const present = new Set<string>();
+  const withMissing: schema.UIStanding[] = [];
+  cached.forEach((s) => {
+    if (activeIds.has(s.playerId)) {
+      withMissing.push(s);
+      present.add(s.playerId);
+    }
+  });
+  activePlayers.forEach((p) => {
     if (!present.has(p.id)) {
       withMissing.push({
         rank: 0,
@@ -198,6 +212,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
             name: leagueData.name,
             season: leagueData.season,
             playerCount: leagueData.playerCount,
+            maxPlayers: leagueData.maxPlayers ?? null,
             commissionerId: leagueData.commissionerId,
             currentWeek: leagueData.currentWeek,
           });
@@ -507,6 +522,40 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const handleRemovePlayer = async (targetPlayerId: string) => {
+    if (!leagueId) return;
+    try {
+      await firebaseUtils.removePlayerFromLeague(leagueId, targetPlayerId);
+      setPlayers((prev) =>
+        prev.map((p) => (p.id === targetPlayerId ? { ...p, removedFromLeague: true } : p))
+      );
+    } catch (err) {
+      setError(`Failed to remove player: ${err}`);
+    }
+  };
+
+  const handleRestorePlayer = async (targetPlayerId: string) => {
+    if (!leagueId) return;
+    try {
+      await firebaseUtils.restorePlayerToLeague(leagueId, targetPlayerId);
+      setPlayers((prev) =>
+        prev.map((p) => (p.id === targetPlayerId ? { ...p, removedFromLeague: false } : p))
+      );
+    } catch (err) {
+      setError(`Failed to restore player: ${err}`);
+    }
+  };
+
+  const handleSetLeagueMaxPlayers = async (maxPlayers: number | null) => {
+    if (!leagueId) return;
+    try {
+      await firebaseUtils.setLeagueMaxPlayers(leagueId, maxPlayers);
+      setLeague((prev) => (prev ? { ...prev, maxPlayers } : prev));
+    } catch (err) {
+      setError(`Failed to update player cap: ${err}`);
+    }
+  };
+
   const handleSetMyWeekLocked = async (locked: boolean) => {
     if (!leagueId || !playerId) return;
     try {
@@ -585,6 +634,9 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         updateMyName: handleUpdateMyName,
         assignMissedPick: handleAssignMissedPick,
         setPlayerPaid: handleSetPlayerPaid,
+        removePlayer: handleRemovePlayer,
+        restorePlayer: handleRestorePlayer,
+        setLeagueMaxPlayers: handleSetLeagueMaxPlayers,
         myWeekLocked,
         setMyWeekLocked: handleSetMyWeekLocked,
         submitPicks: handleSubmitPicks,

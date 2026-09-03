@@ -825,6 +825,16 @@ export async function setLeagueCurrentWeek(leagueId: string, week: number): Prom
 }
 
 /**
+ * Commissioner sets (or clears, with null) the signup cap. Enforced
+ * client-side at signup — see the note in AuthContext.signUp for why this
+ * isn't a hard server-side guarantee.
+ */
+export async function setLeagueMaxPlayers(leagueId: string, maxPlayers: number | null): Promise<void> {
+  const leagueRef = doc(db, "leagues", leagueId);
+  await updateDoc(leagueRef, { maxPlayers });
+}
+
+/**
  * Update a player's own display name. Security rules already permit this
  * (isSelf(playerId) on the players collection's update rule) — this is the
  * first place in the app that actually calls it.
@@ -882,6 +892,25 @@ export async function setPlayerPaidStatus(
 ): Promise<void> {
   const playerRef = doc(db, `leagues/${leagueId}/players`, playerId);
   await updateDoc(playerRef, { hasPaid });
+}
+
+/**
+ * Commissioner "boots" a player. This is a soft-remove (sets a flag), not a
+ * hard delete — deleting the doc outright would let AuthGate's self-heal
+ * silently recreate it the next time that person opens the app. Their
+ * historical picks are untouched; they just drop out of the active roster
+ * (standings, pick counts, Members list) until restored. This does NOT
+ * revoke their ability to sign back in — that needs their Firebase Auth
+ * account disabled, which only the Firebase console can do, not this app.
+ */
+export async function removePlayerFromLeague(leagueId: string, playerId: string): Promise<void> {
+  const playerRef = doc(db, `leagues/${leagueId}/players`, playerId);
+  await updateDoc(playerRef, { removedFromLeague: true });
+}
+
+export async function restorePlayerToLeague(leagueId: string, playerId: string): Promise<void> {
+  const playerRef = doc(db, `leagues/${leagueId}/players`, playerId);
+  await updateDoc(playerRef, { removedFromLeague: false });
 }
 
 /**
