@@ -1028,11 +1028,25 @@ export function WeeklySummary() {
 type ViewType = "picks" | "standings" | "commissioner" | "summary";
 
 export function App() {
-  const { leagueId, playerId, league, players, loading, error, isCommissioner } = useLeague();
+  const { leagueId, playerId, league, players, loading, error, isCommissioner, updateMyName } = useLeague();
   const { signOut } = useAuth();
   const [view, setView] = useState<ViewType>("picks");
 
   const myName = players.find((p) => p.id === playerId)?.name || "Signed in";
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+
+  const startEditingName = () => {
+    setNameDraft(myName);
+    setEditingName(true);
+  };
+
+  const saveNameEdit = () => {
+    if (nameDraft.trim() && nameDraft.trim() !== myName) {
+      updateMyName(nameDraft.trim());
+    }
+    setEditingName(false);
+  };
 
   if (!leagueId || !playerId) {
     return (
@@ -1061,7 +1075,38 @@ export function App() {
             </h1>
             <div className="flex items-center gap-3">
               <div className="text-right">
-                <div className="text-sm font-semibold text-gray-800">{myName}</div>
+                {editingName ? (
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="text"
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && saveNameEdit()}
+                      autoFocus
+                      className="text-sm border rounded px-2 py-1 w-40"
+                    />
+                    <button
+                      onClick={saveNameEdit}
+                      className="text-xs font-semibold text-green-600 px-1"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => setEditingName(false)}
+                      className="text-xs text-gray-400 px-1"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={startEditingName}
+                    className="text-sm font-semibold text-gray-800 hover:underline"
+                    title="Click to edit your display name"
+                  >
+                    {myName} <span className="text-gray-400 font-normal">✎</span>
+                  </button>
+                )}
                 {isCommissioner && (
                   <div className="text-xs font-medium text-blue-600">Commissioner</div>
                 )}

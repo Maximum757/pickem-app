@@ -669,6 +669,16 @@ export async function setLeagueCurrentWeek(leagueId: string, week: number): Prom
 }
 
 /**
+ * Update a player's own display name. Security rules already permit this
+ * (isSelf(playerId) on the players collection's update rule) — this is the
+ * first place in the app that actually calls it.
+ */
+export async function updatePlayerName(leagueId: string, playerId: string, name: string): Promise<void> {
+  const playerRef = doc(db, `leagues/${leagueId}/players`, playerId);
+  await updateDoc(playerRef, { name });
+}
+
+/**
  * Lock a game (call when game time passes)
  */
 export async function lockGame(leagueId: string, gameId: string): Promise<void> {

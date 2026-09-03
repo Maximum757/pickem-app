@@ -27,6 +27,7 @@ interface LeagueContextType {
   setPlayerId: (id: string) => void;
   setCurrentWeek: (week: number) => void;
   advanceToWeek: (week: number) => Promise<void>;
+  updateMyName: (name: string) => Promise<void>;
   submitPicks: (picks: Array<{ gameId: string; pickedTeam: string }>) => Promise<void>;
   submitSinglePick: (gameId: string, pickedTeam: string) => Promise<void>;
   submitMyTiebreakerGuess: (guess: number) => Promise<void>;
@@ -335,6 +336,16 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const handleUpdateMyName = async (name: string) => {
+    if (!leagueId || !playerId) return;
+    try {
+      await firebaseUtils.updatePlayerName(leagueId, playerId, name);
+      setPlayers((prev) => prev.map((p) => (p.id === playerId ? { ...p, name } : p)));
+    } catch (err) {
+      setError(`Failed to update name: ${err}`);
+    }
+  };
+
   const handleReorderGames = async (orderedGameIds: string[]) => {
     if (!leagueId) return;
     const reordered = orderedGameIds
@@ -393,6 +404,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         setPlayerId,
         setCurrentWeek,
         advanceToWeek: handleAdvanceToWeek,
+        updateMyName: handleUpdateMyName,
         submitPicks: handleSubmitPicks,
         submitSinglePick: handleSubmitSinglePick,
         submitMyTiebreakerGuess: handleSubmitMyTiebreakerGuess,

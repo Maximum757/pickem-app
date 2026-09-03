@@ -23,6 +23,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
+  updateProfile,
   User,
 } from "firebase/auth";
 import { doc, setDoc, getDoc, Timestamp } from "firebase/firestore";
@@ -58,6 +59,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const auth = getAuth();
       const credential = await createUserWithEmailAndPassword(auth, email, password);
+
+      // Set this on the Firebase Auth account itself, not just the Firestore
+      // player doc below — this is what AuthGate's self-healing ensurePlayerDoc
+      // falls back to if a player doc write ever fails and needs repairing
+      // later. Without it, that fallback had nothing but email to use as a name.
+      await updateProfile(credential.user, { displayName });
 
       // Player doc id === auth uid — this is the field security rules check.
       // Getting this wrong (e.g. using a random id) would silently break every
