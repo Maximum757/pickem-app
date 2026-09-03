@@ -10,6 +10,52 @@ export interface TeamColor {
   fg: string;
 }
 
+// Full display names for the 32 NFL team abbreviations — Week 0's college
+// slate already stores full names directly as the team value, so those
+// need no lookup; this covers the real-season games, which only ever
+// store the short code.
+export const TEAM_FULL_NAMES: Record<string, string> = {
+  ARI: "Arizona Cardinals",
+  ATL: "Atlanta Falcons",
+  BAL: "Baltimore Ravens",
+  BUF: "Buffalo Bills",
+  CAR: "Carolina Panthers",
+  CHI: "Chicago Bears",
+  CIN: "Cincinnati Bengals",
+  CLE: "Cleveland Browns",
+  DAL: "Dallas Cowboys",
+  DEN: "Denver Broncos",
+  DET: "Detroit Lions",
+  GB: "Green Bay Packers",
+  HOU: "Houston Texans",
+  IND: "Indianapolis Colts",
+  JAX: "Jacksonville Jaguars",
+  KC: "Kansas City Chiefs",
+  LV: "Las Vegas Raiders",
+  LAC: "Los Angeles Chargers",
+  LAR: "Los Angeles Rams",
+  MIA: "Miami Dolphins",
+  MIN: "Minnesota Vikings",
+  NE: "New England Patriots",
+  NO: "New Orleans Saints",
+  NYG: "New York Giants",
+  NYJ: "New York Jets",
+  PHI: "Philadelphia Eagles",
+  PIT: "Pittsburgh Steelers",
+  SF: "San Francisco 49ers",
+  SEA: "Seattle Seahawks",
+  TB: "Tampa Bay Buccaneers",
+  TEN: "Tennessee Titans",
+  WAS: "Washington Commanders",
+};
+
+// Given a team value from a game doc (either an abbreviation for real
+// games, or an already-full college name for Week 0), returns what to
+// actually display — full name either way.
+export function getTeamDisplayName(team: string): string {
+  return TEAM_FULL_NAMES[team] || team;
+}
+
 export const TEAM_COLORS: Record<string, TeamColor> = {
   ARI: { bg: "#97233F", fg: "#FFFFFF" },
   ATL: { bg: "#A71930", fg: "#000000" },

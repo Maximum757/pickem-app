@@ -5,7 +5,7 @@
 import React, { useState } from "react";
 import { useLeague } from "./LeagueContext";
 import { useAuth } from "./AuthContext";
-import { getTeamColor } from "./teamColors";
+import { getTeamColor, getTeamDisplayName } from "./teamColors";
 import * as firebaseUtils from "./firebase-utils";
 import * as schema from "./firestore-schema";
 
@@ -44,12 +44,12 @@ function PickTile({
   return (
     <div
       onClick={isClickable ? onClick : undefined}
-      className={`inline-flex flex-col items-center justify-center min-w-[92px] max-w-[200px] rounded-md px-4 py-2.5 text-center font-bold select-none ${borderClass} ${
+      className={`flex-1 rounded-md px-2 py-2.5 text-center font-bold select-none ${borderClass} ${
         isClickable ? "cursor-pointer" : "cursor-not-allowed"
       }`}
       style={{ background: bg, color: fg, border: "5px solid transparent" }}
     >
-      <div className="font-bold">{abbr}</div>
+      <div className="font-bold">{getTeamDisplayName(abbr)}</div>
       <div className="text-xs font-medium opacity-90 mt-0.5">{subtext}</div>
     </div>
   );
@@ -340,7 +340,7 @@ export function PicksScreen() {
                 )}
               </div>
 
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
                 <PickTile
                   abbr={game.awayTeam}
                   isPicked={picked === game.awayTeam}
