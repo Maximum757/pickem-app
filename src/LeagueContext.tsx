@@ -31,6 +31,8 @@ interface LeagueContextType {
   setCurrentWeek: (week: number) => void;
   advanceToWeek: (week: number) => Promise<void>;
   updateMyName: (name: string) => Promise<void>;
+  assignMissedPick: (gameId: string, playerId: string, pickedTeam: string) => Promise<void>;
+  setPlayerPaid: (playerId: string, hasPaid: boolean) => Promise<void>;
   submitPicks: (picks: Array<{ gameId: string; pickedTeam: string }>) => Promise<void>;
   submitSinglePick: (gameId: string, pickedTeam: string) => Promise<void>;
   submitMyTiebreakerGuess: (guess: number) => Promise<void>;
@@ -469,6 +471,36 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const handleAssignMissedPick = async (gameId: string, forPlayerId: string, pickedTeam: string) => {
+    if (!leagueId) return;
+    try {
+      await firebaseUtils.assignMissedPick(leagueId, forPlayerId, gameId, currentWeek, pickedTeam);
+      // Reload games/standings — this may have just triggered a rescore if
+      // the game was already final.
+      setGames(await loadGamesWithCounts(leagueId, currentWeek));
+      const leagueData = await firebaseUtils.getLeague(leagueId);
+      const standingsData = await firebaseUtils.getStandings(
+        leagueId,
+        leagueData?.season || new Date().getFullYear()
+      );
+      setStandings(mergeStandingsWithRoster(standingsData, players));
+    } catch (err) {
+      setError(`Failed to assign missed pick: ${err}`);
+    }
+  };
+
+  const handleSetPlayerPaid = async (targetPlayerId: string, hasPaid: boolean) => {
+    if (!leagueId) return;
+    try {
+      await firebaseUtils.setPlayerPaidStatus(leagueId, targetPlayerId, hasPaid);
+      setPlayers((prev) =>
+        prev.map((p) => (p.id === targetPlayerId ? { ...p, hasPaid } : p))
+      );
+    } catch (err) {
+      setError(`Failed to update paid status: ${err}`);
+    }
+  };
+
   const handleReorderGames = async (orderedGameIds: string[]) => {
     if (!leagueId) return;
     const reordered = orderedGameIds
@@ -535,6 +567,8 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         setCurrentWeek,
         advanceToWeek: handleAdvanceToWeek,
         updateMyName: handleUpdateMyName,
+        assignMissedPick: handleAssignMissedPick,
+        setPlayerPaid: handleSetPlayerPaid,
         submitPicks: handleSubmitPicks,
         submitSinglePick: handleSubmitSinglePick,
         submitMyTiebreakerGuess: handleSubmitMyTiebreakerGuess,

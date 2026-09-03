@@ -810,6 +810,66 @@ export async function updatePlayerName(leagueId: string, playerId: string, name:
 }
 
 /**
+ * Commissioner toggles a player's dues-paid status. Same field-level
+ * privacy caveat as email on this same document: Firestore doesn't support
+ * field-level rules, so this is technically readable by anyone signed in at
+ * the database level, even though the UI only ever surfaces it on the
+ * commissioner-only Members tab.
+ */
+export async function setPlayerPaidStatus(
+  leagueId: string,
+  playerId: string,
+  hasPaid: boolean
+): Promise<void> {
+  const playerRef = doc(db, `leagues/${leagueId}/players`, playerId);
+  await updateDoc(playerRef, { hasPaid });
+}
+
+/**
+ * Commissioner fills in a pick on behalf of a player who missed one before
+ * their game locked. Marked isWildcard so it's visibly distinguishable from
+ * a pick the player actually made themselves. If the game already has a
+ * result (this pick was assigned after the fact, not just before results
+ * came in), re-runs scoring for that game so the newly-added pick actually
+ * gets counted — otherwise it would sit unscored forever, since
+ * scoreGameImmediately only ever ran once, before this pick existed.
+ */
+export async function assignMissedPick(
+  leagueId: string,
+  playerId: string,
+  gameId: string,
+  week: number,
+  pickedTeam: string
+): Promise<void> {
+  const pickId = schema.getPickId(playerId, gameId);
+  const pickRef = doc(db, `leagues/${leagueId}/picks`, pickId);
+  await setDoc(pickRef, {
+    id: pickId,
+    leagueId,
+    playerId,
+    gameId,
+    week,
+    pickedTeam,
+    isWildcard: true,
+    submittedAt: Timestamp.now(),
+  } as schema.PickDoc);
+
+  const gameRef = doc(db, `leagues/${leagueId}/games`, gameId);
+  const gameSnap = await getDoc(gameRef);
+  const game = gameSnap.data() as schema.GameDoc | undefined;
+  if (game?.result) {
+    await scoreGameImmediately(
+      leagueId,
+      gameId,
+      week,
+      game.result.winner,
+      game.result.loser,
+      game.playoffMultiplier
+    );
+  }
+}
+
+/**
  * Lock a game (call when game time passes)
  */
 export async function lockGame(leagueId: string, gameId: string): Promise<void> {

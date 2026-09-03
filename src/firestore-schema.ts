@@ -49,6 +49,7 @@ export interface PlayerDoc {
   isCommissioner: boolean;
   joinedAt: Timestamp;
   isWildcardPicker: boolean; // True if this is youngest son (auto-fills missed picks)
+  hasPaid?: boolean; // Dues tracking — commissioner-set, defaults to unpaid
 }
 
 /**

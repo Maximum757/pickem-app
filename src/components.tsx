@@ -511,14 +511,8 @@ export function CommissionerDashboard() {
     setTiebreakerAnswer,
     lockTiebreaker,
     unlockTiebreaker,
+    assignMissedPick,
   } = useLeague();
-  const [selectedGame, setSelectedGame] = useState<string | null>(null);
-  const [result, setResult] = useState<{
-    winner: string;
-    loser: string;
-    winnerScore: number;
-    loserScore: number;
-  } | null>(null);
   const [tiebreakerQ, setTiebreakerQ] = useState("");
   const [tiebreakerAnswerDraft, setTiebreakerAnswerDraft] = useState("");
   const [tiebreakerRule, setTiebreakerRule] = useState<"closest" | "closest_without_going_over">(
@@ -531,6 +525,7 @@ export function CommissionerDashboard() {
   const [pickedByGame, setPickedByGame] = useState<{ [gameId: string]: Set<string> }>({});
   const [tiebreakerEnteredBy, setTiebreakerEnteredBy] = useState<Set<string>>(new Set());
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [fillingGameId, setFillingGameId] = useState<string | null>(null);
 
   React.useEffect(() => {
     if (!leagueId) return;
@@ -559,17 +554,11 @@ export function CommissionerDashboard() {
     setTimeout(() => setCopiedKey(null), 1500);
   };
 
-  const handleEnterResult = async () => {
-    if (!selectedGame || !result) return;
-    await enterGameResult(
-      selectedGame,
-      result.winner,
-      result.loser,
-      result.winnerScore,
-      result.loserScore
-    );
-    setSelectedGame(null);
-    setResult(null);
+  const handleDeclareWinner = async (gameId: string, winner: string, loser: string) => {
+    // No score entry — contrarian scoring only ever cared about win/loss
+    // (scoreGameImmediately has always passed 0/0 to the engine), so there
+    // was never a real reason to require it here. One click, done.
+    await enterGameResult(gameId, winner, loser, 0, 0);
   };
 
   const handleSetTiebreakerQuestion = async () => {
@@ -640,81 +629,54 @@ export function CommissionerDashboard() {
       <div className="mb-8 border p-4 rounded bg-blue-50">
         <h3 className="text-lg font-bold mb-1">Enter Game Results</h3>
         <p className="text-sm text-gray-600 mb-4">
-          Tap the winning team, enter the score, and save — one card per game, no
-          dropdown. Scoring updates standings immediately once saved.
+          Tap the winning team — that's it, saves and scores immediately. Games
+          you can't click yet are still open for picks; they unlock here the
+          moment kickoff passes.
         </p>
 
         <div className="space-y-3">
           {games
             .filter((g) => !g.result)
             .map((g) => {
-              const isSelected = selectedGame === g.id;
+              const canDeclare = g.isLocked;
               return (
                 <div key={g.id} className="border rounded bg-white p-3">
-                  <div className="text-xs text-gray-500 mb-2">
-                    {g.timeTBD || !g.gameTime
-                      ? "Time TBD"
-                      : new Date(g.gameTime).toLocaleString()}
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-gray-500">
+                      {g.timeTBD || !g.gameTime
+                        ? "Time TBD"
+                        : new Date(g.gameTime).toLocaleString()}
+                    </span>
+                    {!canDeclare && (
+                      <span className="text-[10px] font-semibold uppercase tracking-wide bg-gray-100 text-gray-500 rounded-full px-2 py-0.5">
+                        Still open — locks at kickoff
+                      </span>
+                    )}
                   </div>
                   <div className="flex gap-2">
                     <button
-                      onClick={() => {
-                        setSelectedGame(g.id);
-                        setResult({ winner: g.awayTeam, loser: g.homeTeam, winnerScore: 0, loserScore: 0 });
-                      }}
-                      className={`flex-1 py-2 px-3 rounded text-sm font-semibold border-2 ${
-                        isSelected && result?.winner === g.awayTeam
-                          ? "border-green-600 bg-green-50"
-                          : "border-transparent bg-gray-100 hover:bg-gray-200"
+                      onClick={() => canDeclare && handleDeclareWinner(g.id, g.awayTeam, g.homeTeam)}
+                      disabled={!canDeclare}
+                      className={`flex-1 py-2 px-3 rounded text-sm font-semibold ${
+                        canDeclare
+                          ? "bg-gray-100 hover:bg-green-100 hover:border-green-600 border-2 border-transparent cursor-pointer"
+                          : "bg-gray-50 text-gray-400 cursor-not-allowed"
                       }`}
                     >
                       {g.awayTeam}
                     </button>
                     <button
-                      onClick={() => {
-                        setSelectedGame(g.id);
-                        setResult({ winner: g.homeTeam, loser: g.awayTeam, winnerScore: 0, loserScore: 0 });
-                      }}
-                      className={`flex-1 py-2 px-3 rounded text-sm font-semibold border-2 ${
-                        isSelected && result?.winner === g.homeTeam
-                          ? "border-green-600 bg-green-50"
-                          : "border-transparent bg-gray-100 hover:bg-gray-200"
+                      onClick={() => canDeclare && handleDeclareWinner(g.id, g.homeTeam, g.awayTeam)}
+                      disabled={!canDeclare}
+                      className={`flex-1 py-2 px-3 rounded text-sm font-semibold ${
+                        canDeclare
+                          ? "bg-gray-100 hover:bg-green-100 hover:border-green-600 border-2 border-transparent cursor-pointer"
+                          : "bg-gray-50 text-gray-400 cursor-not-allowed"
                       }`}
                     >
                       {g.homeTeam}
                     </button>
                   </div>
-
-                  {isSelected && result && (
-                    <div className="mt-3 pt-3 border-t space-y-2">
-                      <div className="flex gap-2">
-                        <div className="flex-1">
-                          <label className="text-xs text-gray-600">{result.winner} score</label>
-                          <input
-                            type="number"
-                            value={result.winnerScore}
-                            onChange={(e) => setResult({ ...result, winnerScore: parseInt(e.target.value) || 0 })}
-                            className="w-full border p-2 rounded text-sm"
-                          />
-                        </div>
-                        <div className="flex-1">
-                          <label className="text-xs text-gray-600">{result.loser} score</label>
-                          <input
-                            type="number"
-                            value={result.loserScore}
-                            onChange={(e) => setResult({ ...result, loserScore: parseInt(e.target.value) || 0 })}
-                            className="w-full border p-2 rounded text-sm"
-                          />
-                        </div>
-                      </div>
-                      <button
-                        onClick={handleEnterResult}
-                        className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded text-sm"
-                      >
-                        Save Result
-                      </button>
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -872,40 +834,84 @@ export function CommissionerDashboard() {
             const missing = allPlayerIds.filter((id) => !picked.has(id));
             const isComplete = missing.length === 0;
             const key = `game-${game.id}`;
+            const isExpanded = fillingGameId === game.id;
+            // Only makes sense to fill in a missed pick once the game's
+            // actually locked — before that, the player can still just pick
+            // it themselves.
+            const canFillIn = game.isLocked && missing.length > 0;
             return (
-              <div
-                key={game.id}
-                className="flex items-center justify-between border rounded bg-white px-3 py-2"
-              >
-                <div>
-                  <div className="text-xs text-gray-500">
-                    {game.timeTBD || !game.gameTime
-                      ? "Time TBD"
-                      : new Date(game.gameTime).toLocaleString()}
+              <div key={game.id} className="border rounded bg-white px-3 py-2 mb-1">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs text-gray-500">
+                      {game.timeTBD || !game.gameTime
+                        ? "Time TBD"
+                        : new Date(game.gameTime).toLocaleString()}
+                    </div>
+                    <div className="text-sm font-semibold">
+                      {game.awayTeam} @ {game.homeTeam}
+                    </div>
                   </div>
-                  <div className="text-sm font-semibold">
-                    {game.awayTeam} @ {game.homeTeam}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`text-xs font-bold px-2 py-1 rounded-full ${
-                      isComplete ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
-                    }`}
-                  >
-                    {allPlayerIds.length - missing.length} / {allPlayerIds.length}
-                  </span>
-                  {isComplete ? (
-                    <span className="text-xs text-gray-400">All set</span>
-                  ) : (
-                    <button
-                      onClick={() => copyMissingContacts(key, missing)}
-                      className="text-xs font-semibold text-blue-600"
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-xs font-bold px-2 py-1 rounded-full ${
+                        isComplete ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                      }`}
                     >
-                      {copiedKey === key ? "Copied!" : "Copy contacts"}
-                    </button>
-                  )}
+                      {allPlayerIds.length - missing.length} / {allPlayerIds.length}
+                    </span>
+                    {isComplete ? (
+                      <span className="text-xs text-gray-400">All set</span>
+                    ) : (
+                      <button
+                        onClick={() => copyMissingContacts(key, missing)}
+                        className="text-xs font-semibold text-blue-600"
+                      >
+                        {copiedKey === key ? "Copied!" : "Copy contacts"}
+                      </button>
+                    )}
+                    {canFillIn && (
+                      <button
+                        onClick={() => setFillingGameId(isExpanded ? null : game.id)}
+                        className="text-xs font-semibold text-purple-600"
+                      >
+                        {isExpanded ? "Close" : "Fill in"}
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {isExpanded && canFillIn && (
+                  <div className="mt-2 pt-2 border-t space-y-2">
+                    <p className="text-xs text-gray-500">
+                      Assign a pick on their behalf — marked as a wildcard/assigned pick.
+                    </p>
+                    {missing.map((mPlayerId) => {
+                      const player = players.find((p) => p.id === mPlayerId);
+                      const awayColors = getTeamColor(game.awayTeam);
+                      const homeColors = getTeamColor(game.homeTeam);
+                      return (
+                        <div key={mPlayerId} className="flex items-center gap-2">
+                          <span className="text-xs flex-1 truncate">{player?.name || mPlayerId}</span>
+                          <button
+                            onClick={() => assignMissedPick(game.id, mPlayerId, game.awayTeam)}
+                            style={{ background: awayColors.bg, color: awayColors.fg }}
+                            className="text-xs font-bold px-2 py-1 rounded"
+                          >
+                            {game.awayTeam}
+                          </button>
+                          <button
+                            onClick={() => assignMissedPick(game.id, mPlayerId, game.homeTeam)}
+                            style={{ background: homeColors.bg, color: homeColors.fg }}
+                            className="text-xs font-bold px-2 py-1 rounded"
+                          >
+                            {game.homeTeam}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -1121,7 +1127,58 @@ export function WeeklySummary() {
 // MAIN APP COMPONENT
 // ============================================================================
 
-type ViewType = "picks" | "standings" | "commissioner" | "summary";
+type ViewType = "picks" | "standings" | "commissioner" | "summary" | "members";
+
+// ============================================================================
+// MEMBERS SCREEN - Roster with contact info and dues tracking (commissioner only)
+// ============================================================================
+
+export function MembersScreen() {
+  const { players, setPlayerPaid } = useLeague();
+
+  const paidCount = players.filter((p) => p.hasPaid).length;
+
+  return (
+    <div className="p-4 max-w-2xl">
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-2xl font-bold">Members</h2>
+        <span className="text-xs font-bold px-2 py-1 rounded-full bg-gray-100 text-gray-700">
+          {paidCount} / {players.length} paid
+        </span>
+      </div>
+      <p className="text-sm text-gray-600 mb-4">
+        Names and emails for everyone in the league, and who's paid their dues.
+      </p>
+
+      <div className="space-y-2">
+        {players.map((p) => (
+          <div
+            key={p.id}
+            className="flex items-center justify-between border rounded bg-white px-3 py-2"
+          >
+            <div>
+              <div className="text-sm font-semibold">{p.name}</div>
+              <div className="text-xs text-gray-500">{p.email}</div>
+            </div>
+            <button
+              onClick={() => setPlayerPaid(p.id, !p.hasPaid)}
+              className={`text-xs font-bold px-3 py-1.5 rounded-full ${
+                p.hasPaid
+                  ? "bg-green-100 text-green-700"
+                  : "bg-red-100 text-red-700"
+              }`}
+            >
+              {p.hasPaid ? "✓ Paid" : "Not paid"}
+            </button>
+          </div>
+        ))}
+        {players.length === 0 && (
+          <p className="text-sm text-gray-500">No members yet.</p>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function App() {
   const { leagueId, playerId, league, players, loading, error, isCommissioner, updateMyName } = useLeague();
@@ -1262,6 +1319,18 @@ export function App() {
                 Weekly Summary
               </button>
             )}
+            {isCommissioner && (
+              <button
+                onClick={() => setView("members")}
+                className={`py-2 px-4 rounded font-medium transition ${
+                  view === "members"
+                    ? "bg-blue-500 text-white"
+                    : "bg-gray-200 hover:bg-gray-300"
+                }`}
+              >
+                Members
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1272,6 +1341,7 @@ export function App() {
         {!loading && view === "standings" && <StandingsScreen />}
         {!loading && view === "commissioner" && isCommissioner && <CommissionerDashboard />}
         {!loading && view === "summary" && isCommissioner && <WeeklySummary />}
+        {!loading && view === "members" && isCommissioner && <MembersScreen />}
       </div>
     </div>
   );

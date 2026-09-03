@@ -60,7 +60,7 @@ service cloud.firestore {
         // fail its own profile write). The commissioner can also create or
         // remove players directly (adding/removing someone from the league).
         allow create: if isSelf(playerId) || isCommissioner(leagueId);
-        allow update: if isSelf(playerId);
+        allow update: if isSelf(playerId) || isCommissioner(leagueId);
         allow delete: if isCommissioner(leagueId);
       }
 
@@ -140,11 +140,14 @@ service cloud.firestore {
           resource.data.playerId == request.auth.uid &&
           gameIsOpen(leagueId, resource.data.gameId);
 
-        // Scoring (isCorrect, pointsAwarded) is written by the commissioner's
-        // scoreWeek() batch, not by players.
-        allow update: if isCommissioner(leagueId) &&
-          request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['isCorrect', 'pointsAwarded']);
+        // The commissioner can create/overwrite ANY pick, lock or not. This
+        // covers two distinct needs with one broad rule: (1) scoreGameImmediately's
+        // batch writing isCorrect/pointsAwarded after a result comes in, and
+        // (2) filling in a missed pick after the fact (see assignMissedPick()
+        // in firebase-utils.ts) — deliberately not gated by gameIsOpen(),
+        // since the whole point of the second case is fixing a pick that
+        // already missed its window.
+        allow create, update: if isCommissioner(leagueId);
       }
 
       match /weeklyTiebreakers/{week} {
