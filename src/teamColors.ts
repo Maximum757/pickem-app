@@ -45,11 +45,51 @@ export const TEAM_COLORS: Record<string, TeamColor> = {
   WAS: { bg: "#5A1414", fg: "#FFB612" },
 };
 
-// Fallback for any team not in the map (e.g. a college team in the Week 0
-// test that wasn't given an explicit NFL-borrowed color) — neutral gray
-// rather than a crash or an undefined-color render.
+// Week 0's test slate stores full college team NAMES as the team value
+// (not NFL abbreviations), so getTeamColor() needs entries keyed that way
+// too — these were computed once already, in seed-week0.ts's TEST_COLORS,
+// but never actually wired into the app's real color lookup, so every
+// Week 0 tile rendered as flat gray until now. Same NFL-borrowed palette,
+// just merged into the one lookup every screen actually uses.
+export const COLLEGE_TEAM_COLORS: Record<string, TeamColor> = {
+  "North Texas": { bg: "#97233F", fg: "#FFFFFF" },
+  Indiana: { bg: "#A71930", fg: "#000000" },
+  "East Carolina": { bg: "#241773", fg: "#9E7C0C" },
+  Alabama: { bg: "#00338D", fg: "#C60C30" },
+  "Ball State": { bg: "#0085CA", fg: "#101820" },
+  "Ohio State": { bg: "#0B162A", fg: "#C83803" },
+  "Tennessee State": { bg: "#FB4F14", fg: "#000000" },
+  Georgia: { bg: "#311D00", fg: "#FF3C00" },
+  Baylor: { bg: "#041E42", fg: "#FFFFFF" },
+  Auburn: { bg: "#FB4F14", fg: "#002244" },
+  "Boise State": { bg: "#0076B6", fg: "#B0B7BC" },
+  Oregon: { bg: "#203731", fg: "#FFB612" },
+  "Texas State": { bg: "#03202F", fg: "#A71930" },
+  Texas: { bg: "#002C5F", fg: "#A2AAAD" },
+  Tulane: { bg: "#006778", fg: "#9F792C" },
+  Duke: { bg: "#E31837", fg: "#FFB81C" },
+  Clemson: { bg: "#000000", fg: "#A5ACAF" },
+  LSU: { bg: "#0080C6", fg: "#FFC20E" },
+  "Western Michigan": { bg: "#003594", fg: "#FFA300" },
+  Michigan: { bg: "#008E97", fg: "#FC4C02" },
+  "Florida Atlantic": { bg: "#4F2683", fg: "#FFC62F" },
+  Florida: { bg: "#002244", fg: "#C60C30" },
+  UCLA: { bg: "#D3BC8D", fg: "#101820" },
+  California: { bg: "#0B2265", fg: "#A71930" },
+  "Washington State": { bg: "#125740", fg: "#FFFFFF" },
+  Washington: { bg: "#004C54", fg: "#A5ACAF" },
+  Louisville: { bg: "#FFB612", fg: "#101820" },
+  "Ole Miss": { bg: "#AA0000", fg: "#B3995D" },
+  Wisconsin: { bg: "#69BE28", fg: "#002244" },
+  "Notre Dame": { bg: "#FF7900", fg: "#D50A0A" },
+  SMU: { bg: "#0C2340", fg: "#8A8D8F" },
+  "Florida State": { bg: "#5A1414", fg: "#FFB612" },
+};
+
+// Fallback for any team not in either map — neutral gray rather than a
+// crash or an undefined-color render.
 export const FALLBACK_COLOR: TeamColor = { bg: "#6b7280", fg: "#FFFFFF" };
 
 export function getTeamColor(abbr: string): TeamColor {
-  return TEAM_COLORS[abbr] || FALLBACK_COLOR;
+  return TEAM_COLORS[abbr] || COLLEGE_TEAM_COLORS[abbr] || FALLBACK_COLOR;
 }

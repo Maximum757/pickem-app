@@ -121,6 +121,21 @@ service cloud.firestore {
         // uniformly provable across the whole collection — no list-query
         // issue here.
         allow read: if isCommissioner(leagueId);
+        // Everyone can also see the commissioner's own picks (the
+        // commissioner broadcasts these deliberately, before lock, by
+        // design — see the "why" in the app's product notes) and anyone's
+        // picks for a game that's already locked — this is what makes the
+        // player-facing Weekly Summary tab possible without breaking the
+        // core privacy rule for still-open games. Both conditions here are
+        // per-document but based on real data fields (a get() to a fixed
+        // league doc, and a get() to the specific game the pick belongs
+        // to) — not a document-ID pattern trick, which is the kind of
+        // condition Firestore can safely evaluate per-document in a list
+        // query. This is the most complex rule in the whole file; test it
+        // for real with a second account before trusting it fully.
+        allow read: if isSignedIn() &&
+          (resource.data.playerId == get(/databases/$(database)/documents/leagues/$(leagueId)).data.commissionerId ||
+           get(/databases/$(database)/documents/leagues/$(leagueId)/games/$(resource.data.gameId)).data.isLocked == true);
 
         // A player can only create their own pick, and only while the game
         // it's for is still open (not locked). This is server-side — it's

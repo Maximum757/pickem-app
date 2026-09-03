@@ -21,6 +21,7 @@ import * as schema from "./firestore-schema";
 function PickTile({
   abbr,
   isPicked,
+  showColor,
   isClickable,
   borderClass,
   subtext,
@@ -28,19 +29,25 @@ function PickTile({
 }: {
   abbr: string;
   isPicked: boolean;
+  showColor: boolean;
   isClickable: boolean;
   borderClass: string;
   subtext: string;
   onClick: () => void;
 }) {
   const colors = getTeamColor(abbr);
+  // Only the team you actually picked shows its real color+border. The one
+  // you didn't pick greys out — same plain look every tile had before
+  // colors existed, so the picked one stays the only thing drawing the eye.
+  const bg = showColor ? colors.bg : "#e5e7eb";
+  const fg = showColor ? colors.fg : "#6b7280";
   return (
     <div
       onClick={isClickable ? onClick : undefined}
       className={`flex-1 rounded-md px-2 py-2.5 text-center font-bold select-none ${borderClass} ${
         isClickable ? "cursor-pointer" : "cursor-not-allowed"
       }`}
-      style={{ background: colors.bg, color: colors.fg, border: "5px solid transparent" }}
+      style={{ background: bg, color: fg, border: "5px solid transparent" }}
     >
       <div className="font-bold">{abbr}</div>
       <div className="text-xs font-medium opacity-90 mt-0.5">{subtext}</div>
@@ -97,12 +104,55 @@ function StatusCircle({
   );
 }
 
+// Shared week selector — used on every player-facing screen that's scoped
+// to one week (Picks, My Summary, Weekly Summary). Browsing to a different
+// week here is purely local UI state (setCurrentWeek), separate from the
+// commissioner's advanceToWeek() action that changes what week the league
+// opens to by default for everyone — one player poking around Week 3 never
+// affects what anyone else sees.
+function WeekSelector({
+  currentWeek,
+  officialWeek,
+  onChange,
+}: {
+  currentWeek: number;
+  officialWeek: number | undefined;
+  onChange: (week: number) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      <select
+        value={currentWeek}
+        onChange={(e) => onChange(parseInt(e.target.value))}
+        className="border rounded px-2 py-1 text-sm font-semibold"
+      >
+        <option value={0}>Week 0 (test)</option>
+        {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
+          <option key={w} value={w}>
+            Week {w}
+          </option>
+        ))}
+      </select>
+      {officialWeek !== undefined && currentWeek !== officialWeek && (
+        <button
+          onClick={() => onChange(officialWeek)}
+          className="text-xs text-blue-600 font-medium hover:underline"
+        >
+          Back to current week
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function PicksScreen() {
   const {
     games,
     userPicks,
     userPickResults,
     currentWeek,
+    setCurrentWeek,
+    league,
     loading,
     submitSinglePick,
     tiebreakerQuestion,
@@ -145,6 +195,7 @@ export function PicksScreen() {
 
   return (
     <div className="p-4">
+      <WeekSelector currentWeek={currentWeek} officialWeek={league?.currentWeek} onChange={setCurrentWeek} />
       <div className="flex items-start justify-between mb-1">
         <h2 className="text-2xl font-bold">Week {currentWeek} Picks</h2>
         <div className="text-right">
@@ -270,6 +321,7 @@ export function PicksScreen() {
                 <PickTile
                   abbr={game.awayTeam}
                   isPicked={picked === game.awayTeam}
+                  showColor={!picked || picked === game.awayTeam}
                   isClickable={isClickable}
                   borderClass={borderClassFor(game.awayTeam)}
                   subtext={subtextFor(game.awayTeam)}
@@ -279,6 +331,7 @@ export function PicksScreen() {
                 <PickTile
                   abbr={game.homeTeam}
                   isPicked={picked === game.homeTeam}
+                  showColor={!picked || picked === game.homeTeam}
                   isClickable={isClickable}
                   borderClass={borderClassFor(game.homeTeam)}
                   subtext={subtextFor(game.homeTeam)}
@@ -296,6 +349,68 @@ export function PicksScreen() {
 // ============================================================================
 // STANDINGS SCREEN - View season standings
 // ============================================================================
+
+// ============================================================================
+// MY SUMMARY - Personal pick recap for one week: colored+points if you won
+// that game, greyed out with nothing if you lost. Every player's own tab —
+// not commissioner-gated, since it's only ever their own data.
+// ============================================================================
+
+export function MySummaryScreen() {
+  const { games, userPicks, userPickResults, currentWeek, setCurrentWeek, league, loading } = useLeague();
+
+  if (loading) return <div className="p-4">Loading...</div>;
+
+  const pickedGames = games.filter((g) => !!userPicks[g.id]);
+
+  return (
+    <div className="p-4 max-w-2xl">
+      <WeekSelector currentWeek={currentWeek} officialWeek={league?.currentWeek} onChange={setCurrentWeek} />
+      <h2 className="text-2xl font-bold mb-1">My Summary — Week {currentWeek}</h2>
+      <p className="text-sm text-gray-600 mb-4">
+        Your picks this week. Winning picks show your points; losing picks grey out.
+      </p>
+
+      <div className="space-y-2">
+        {pickedGames.map((g) => {
+          const pick = userPicks[g.id];
+          const result = userPickResults[g.id];
+          const isFinal = !!g.result;
+          const isCorrect = result?.isCorrect === true;
+          const colors = getTeamColor(pick);
+          // Pending (not yet final): show the pick in its real color, no
+          // points yet, since we don't know the outcome. Final + correct:
+          // real color + points earned. Final + incorrect: greyed out,
+          // nothing shown — matches the plain look every tile had pre-color.
+          const showColor = !isFinal || isCorrect;
+          return (
+            <div
+              key={g.id}
+              className="flex items-center justify-between border rounded px-3 py-2"
+              style={{
+                background: showColor ? colors.bg : "#e5e7eb",
+                color: showColor ? colors.fg : "#6b7280",
+              }}
+            >
+              <span className="text-sm font-bold">
+                {g.awayTeam} @ {g.homeTeam}
+              </span>
+              <span className="text-sm font-bold">
+                {pick}
+                {isFinal && isCorrect && result?.pointsAwarded !== undefined && (
+                  <span> ({result.pointsAwarded})</span>
+                )}
+              </span>
+            </div>
+          );
+        })}
+        {pickedGames.length === 0 && (
+          <p className="text-sm text-gray-500">No picks made yet for Week {currentWeek}.</p>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function StandingsScreen() {
   const { standings, loading } = useLeague();
@@ -934,7 +1049,7 @@ export function CommissionerDashboard() {
 
 export function WeeklySummary() {
   const { leagueId, players, standings, currentWeek, userPicks, games } = useLeague();
-  const [summaryWeek, setSummaryWeek] = useState(Math.max(currentWeek - 1, 0));
+  const [summaryWeek, setSummaryWeek] = useState(currentWeek);
   const [summaryGames, setSummaryGames] = useState<schema.UIGame[]>([]);
   const [summaryPicks, setSummaryPicks] = useState<schema.PickDoc[]>([]);
   const [loadingSummary, setLoadingSummary] = useState(false);
@@ -991,20 +1106,7 @@ export function WeeklySummary() {
       <h2 className="text-2xl font-bold mb-1">Weekly Summary</h2>
       <p className="text-sm text-gray-600 mb-4">Screenshot this to send out</p>
 
-      <div className="mb-4">
-        <label className="block text-xs font-medium text-gray-600 mb-1">Week to recap</label>
-        <select
-          value={summaryWeek}
-          onChange={(e) => setSummaryWeek(parseInt(e.target.value))}
-          className="border p-2 rounded text-sm"
-        >
-          {Array.from({ length: currentWeek }, (_, i) => i).map((w) => (
-            <option key={w} value={w}>
-              Week {w}
-            </option>
-          ))}
-        </select>
-      </div>
+      <WeekSelector currentWeek={summaryWeek} officialWeek={currentWeek} onChange={setSummaryWeek} />
 
       {loadingSummary ? (
         <div className="text-sm text-gray-600 mb-6">Loading...</div>
@@ -1127,7 +1229,7 @@ export function WeeklySummary() {
 // MAIN APP COMPONENT
 // ============================================================================
 
-type ViewType = "picks" | "standings" | "commissioner" | "summary" | "members";
+type ViewType = "picks" | "mysummary" | "standings" | "commissioner" | "summary" | "members";
 
 // ============================================================================
 // MEMBERS SCREEN - Roster with contact info and dues tracking (commissioner only)
@@ -1286,6 +1388,16 @@ export function App() {
               My Picks
             </button>
             <button
+              onClick={() => setView("mysummary")}
+              className={`py-2 px-4 rounded font-medium transition ${
+                view === "mysummary"
+                  ? "bg-blue-500 text-white"
+                  : "bg-gray-200 hover:bg-gray-300"
+              }`}
+            >
+              My Summary
+            </button>
+            <button
               onClick={() => setView("standings")}
               className={`py-2 px-4 rounded font-medium transition ${
                 view === "standings"
@@ -1307,18 +1419,16 @@ export function App() {
                 Commissioner
               </button>
             )}
-            {isCommissioner && (
-              <button
-                onClick={() => setView("summary")}
-                className={`py-2 px-4 rounded font-medium transition ${
-                  view === "summary"
-                    ? "bg-blue-500 text-white"
-                    : "bg-gray-200 hover:bg-gray-300"
-                }`}
-              >
-                Weekly Summary
-              </button>
-            )}
+            <button
+              onClick={() => setView("summary")}
+              className={`py-2 px-4 rounded font-medium transition ${
+                view === "summary"
+                  ? "bg-blue-500 text-white"
+                  : "bg-gray-200 hover:bg-gray-300"
+              }`}
+            >
+              Weekly Summary
+            </button>
             {isCommissioner && (
               <button
                 onClick={() => setView("members")}
@@ -1338,9 +1448,10 @@ export function App() {
       <div className="max-w-5xl mx-auto">
         {loading && <div className="p-4 text-gray-600">Loading...</div>}
         {!loading && view === "picks" && <PicksScreen />}
+        {!loading && view === "mysummary" && <MySummaryScreen />}
         {!loading && view === "standings" && <StandingsScreen />}
         {!loading && view === "commissioner" && isCommissioner && <CommissionerDashboard />}
-        {!loading && view === "summary" && isCommissioner && <WeeklySummary />}
+        {!loading && view === "summary" && <WeeklySummary />}
         {!loading && view === "members" && isCommissioner && <MembersScreen />}
       </div>
     </div>
