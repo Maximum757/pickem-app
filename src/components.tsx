@@ -210,12 +210,11 @@ export function PicksScreen() {
                 : "bg-purple-100 text-purple-700 hover:bg-purple-200"
             }`}
           >
-            {myWeekLocked ? "🔒 My picks are locked — click to unlock" : "Lock my picks for this week"}
+            {myWeekLocked ? "🔒 My picks are locked — everyone can see them" : "Lock my picks for this week"}
           </button>
           {!myWeekLocked && (
             <span className="text-xs text-gray-500">
-              Your picks are visible to everyone as you make them — lock when you're
-              actually done deciding.
+              Nobody sees these until you lock — lock when you're actually done deciding.
             </span>
           )}
         </div>

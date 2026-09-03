@@ -10,7 +10,8 @@
     "test": "tsc -p tsconfig.engine.json && cp dist-engine-package.json dist-engine/package.json && node dist-engine/pick-em-simulation.js",
     "seed:week0": "tsc -p tsconfig.seed.json && cp dist-engine-package.json dist-seed/package.json && node --env-file=.env.local dist-seed/seed-week0.js",
     "export": "tsc -p tsconfig.export.json && cp dist-engine-package.json dist-export/package.json && node --env-file=.env.local dist-export/export-data.js",
-    "seed:weeks1-8": "tsc -p tsconfig.weeks1-8.json && cp dist-engine-package.json dist-weeks1-8/package.json && node --env-file=.env.local dist-weeks1-8/seed-weeks1-8.js"
+    "seed:weeks1-8": "tsc -p tsconfig.weeks1-8.json && cp dist-engine-package.json dist-weeks1-8/package.json && node --env-file=.env.local dist-weeks1-8/seed-weeks1-8.js",
+    "seed:weeks9-18": "tsc -p tsconfig.weeks9-18.json && cp dist-engine-package.json dist-weeks9-18/package.json && node --env-file=.env.local dist-weeks9-18/seed-weeks9-18.js"
   },
   "dependencies": {
     "react": "^18.2.0",
