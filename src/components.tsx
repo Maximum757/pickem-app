@@ -9,6 +9,21 @@ import { getTeamColor, getTeamDisplayName } from "./teamColors";
 import * as firebaseUtils from "./firebase-utils";
 import * as schema from "./firestore-schema";
 
+// Shared kickoff-time formatter — every place a game's time gets displayed
+// uses this, so they can't drift out of sync with each other. Explicit
+// options rather than a bare toLocaleString() because the default includes
+// seconds, which is just noise for a kickoff time nobody needs to the
+// second.
+function formatKickoff(date: Date): string {
+  return date.toLocaleString(undefined, {
+    month: "numeric",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 // ============================================================================
 // PICKS SCREEN - Player picks entry
 // ============================================================================
@@ -326,7 +341,7 @@ export function PicksScreen() {
                 <span className="text-xs text-gray-600">
                   {game.timeTBD || !game.gameTime
                     ? "Time TBD"
-                    : new Date(game.gameTime).toLocaleString()}
+                    : formatKickoff(new Date(game.gameTime))}
                 </span>
                 {isLocked && (
                   <span className="text-[10px] font-semibold uppercase tracking-wide bg-gray-100 border border-gray-300 text-gray-600 rounded-full px-2 py-0.5">
@@ -639,7 +654,7 @@ export function ScheduleManager() {
                     {game.timeTBD
                       ? "Time TBD"
                       : game.gameTime
-                      ? new Date(game.gameTime).toLocaleString()
+                      ? formatKickoff(new Date(game.gameTime))
                       : "Time TBD"}
                     {game.isManuallyLocked && (
                       <span className="ml-2 text-red-600 font-medium">Manually locked</span>
@@ -900,7 +915,7 @@ export function CommissionerDashboard() {
                     <span className="text-xs text-gray-500">
                       {g.timeTBD || !g.gameTime
                         ? "Time TBD"
-                        : new Date(g.gameTime).toLocaleString()}
+                        : formatKickoff(new Date(g.gameTime))}
                     </span>
                     {!canDeclare && (
                       <span className="text-[10px] font-semibold uppercase tracking-wide bg-gray-100 text-gray-500 rounded-full px-2 py-0.5">
@@ -1101,7 +1116,7 @@ export function CommissionerDashboard() {
                     <div className="text-xs text-gray-500">
                       {game.timeTBD || !game.gameTime
                         ? "Time TBD"
-                        : new Date(game.gameTime).toLocaleString()}
+                        : formatKickoff(new Date(game.gameTime))}
                     </div>
                     <div className="text-sm font-semibold">
                       {game.awayTeam} @ {game.homeTeam}
