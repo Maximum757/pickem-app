@@ -1033,6 +1033,7 @@ export function App() {
   const [view, setView] = useState<ViewType>("picks");
 
   const myName = players.find((p) => p.id === playerId)?.name || "Signed in";
+  const myEmail = players.find((p) => p.id === playerId)?.email || "";
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
 
@@ -1107,6 +1108,7 @@ export function App() {
                     {myName} <span className="text-gray-400 font-normal">✎</span>
                   </button>
                 )}
+                {myEmail && <div className="text-xs text-gray-500">{myEmail}</div>}
                 {isCommissioner && (
                   <div className="text-xs font-medium text-blue-600">Commissioner</div>
                 )}
