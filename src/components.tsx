@@ -4,6 +4,7 @@
 
 import React, { useState } from "react";
 import { useLeague } from "./LeagueContext";
+import { useAuth } from "./AuthContext";
 import { getTeamColor } from "./teamColors";
 import * as firebaseUtils from "./firebase-utils";
 import * as schema from "./firestore-schema";
@@ -999,8 +1000,11 @@ export function WeeklySummary() {
 type ViewType = "picks" | "standings" | "commissioner" | "summary";
 
 export function App() {
-  const { leagueId, playerId, league, loading, error, isCommissioner } = useLeague();
+  const { leagueId, playerId, league, players, loading, error, isCommissioner } = useLeague();
+  const { signOut } = useAuth();
   const [view, setView] = useState<ViewType>("picks");
+
+  const myName = players.find((p) => p.id === playerId)?.name || "Signed in";
 
   if (!leagueId || !playerId) {
     return (
@@ -1023,9 +1027,25 @@ export function App() {
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white border-b">
         <div className="max-w-5xl mx-auto px-4 py-4">
-          <h1 className="text-3xl font-bold mb-2">
-            {league?.name || "Pick 'Em"} ({league?.season})
-          </h1>
+          <div className="flex items-start justify-between mb-2">
+            <h1 className="text-3xl font-bold">
+              {league?.name || "Pick 'Em"} ({league?.season})
+            </h1>
+            <div className="flex items-center gap-3">
+              <div className="text-right">
+                <div className="text-sm font-semibold text-gray-800">{myName}</div>
+                {isCommissioner && (
+                  <div className="text-xs font-medium text-blue-600">Commissioner</div>
+                )}
+              </div>
+              <button
+                onClick={() => signOut()}
+                className="text-xs font-medium text-gray-500 hover:text-gray-800 border border-gray-300 rounded px-2 py-1"
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
           <div className="flex gap-4 text-sm">
             <button
               onClick={() => setView("picks")}
