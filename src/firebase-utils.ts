@@ -94,6 +94,31 @@ export async function getPlayerWeeklyPicks(
 }
 
 /**
+ * Every pick a player has ever made, across every week — no week filter.
+ * Safely covered by the SAME security rule as getPlayerWeeklyPicks (the
+ * query filters on playerId==self, matching the rule's own
+ * resource.data.playerId check) — nothing new needed there. Used by the
+ * season-wide "My Summary" grid.
+ */
+export async function getPlayerAllPicks(leagueId: string, playerId: string): Promise<schema.PickDoc[]> {
+  const q = query(collection(db, `leagues/${leagueId}/picks`), where("playerId", "==", playerId));
+  const querySnapshot = await getDocs(q);
+  return querySnapshot.docs.map((doc) => doc.data() as schema.PickDoc);
+}
+
+/**
+ * Every game across every week — no week filter. The games collection has
+ * always been openly readable by any signed-in user, so this needs no rule
+ * changes either. Used to build the season-wide "My Summary" grid's column
+ * headers and per-week game ordering.
+ */
+export async function getAllGamesForLeague(leagueId: string): Promise<schema.GameDoc[]> {
+  const q = query(collection(db, `leagues/${leagueId}/games`), orderBy("week"), orderBy("order"));
+  const querySnapshot = await getDocs(q);
+  return querySnapshot.docs.map((doc) => doc.data() as schema.GameDoc);
+}
+
+/**
  * Get all picks for a game
  */
 export async function getGamePicks(

@@ -357,57 +357,134 @@ export function PicksScreen() {
 // ============================================================================
 
 export function MySummaryScreen() {
-  const { games, userPicks, userPickResults, currentWeek, setCurrentWeek, league, loading } = useLeague();
+  const { leagueId, playerId, loading } = useLeague();
+  const [allGames, setAllGames] = useState<schema.UIGame[]>([]);
+  const [allPicks, setAllPicks] = useState<schema.PickDoc[]>([]);
+  const [loadingSummary, setLoadingSummary] = useState(true);
 
-  if (loading) return <div className="p-4">Loading...</div>;
+  React.useEffect(() => {
+    if (!leagueId || !playerId) return;
+    setLoadingSummary(true);
+    (async () => {
+      const [gamesData, picksData] = await Promise.all([
+        firebaseUtils.getAllGamesForLeague(leagueId),
+        firebaseUtils.getPlayerAllPicks(leagueId, playerId),
+      ]);
+      setAllGames(
+        gamesData.map((g) => ({
+          id: g.id,
+          week: g.week,
+          order: g.order,
+          playoffMultiplier: g.playoffMultiplier,
+          homeTeam: g.homeTeam,
+          awayTeam: g.awayTeam,
+          gameTime: g.gameTime ? g.gameTime.toDate() : null,
+          timeTBD: g.timeTBD,
+          isLocked: g.isLocked,
+          result: g.result,
+        }))
+      );
+      setAllPicks(picksData);
+      setLoadingSummary(false);
+    })();
+  }, [leagueId, playerId]);
 
-  const pickedGames = games.filter((g) => !!userPicks[g.id]);
+  if (loading || loadingSummary) return <div className="p-4">Loading...</div>;
+
+  // Group games by week, sorted by that week's display order — this is
+  // what makes each column's row order match the picks screen.
+  const gamesByWeek = new Map<number, schema.UIGame[]>();
+  allGames.forEach((g) => {
+    if (!gamesByWeek.has(g.week)) gamesByWeek.set(g.week, []);
+    gamesByWeek.get(g.week)!.push(g);
+  });
+  const weeks = Array.from(gamesByWeek.keys()).sort((a, b) => a - b);
+  const maxRows = Math.max(0, ...weeks.map((w) => gamesByWeek.get(w)!.length));
+
+  const pickByGameId = new Map<string, schema.PickDoc>();
+  allPicks.forEach((p) => pickByGameId.set(p.gameId, p));
 
   return (
-    <div className="p-4 max-w-2xl">
-      <WeekSelector currentWeek={currentWeek} officialWeek={league?.currentWeek} onChange={setCurrentWeek} />
-      <h2 className="text-2xl font-bold mb-1">My Summary — Week {currentWeek}</h2>
+    <div className="p-4">
+      <h2 className="text-2xl font-bold mb-1">My Summary</h2>
       <p className="text-sm text-gray-600 mb-4">
-        Your picks this week. Winning picks show your points; losing picks grey out.
+        Every pick, every week. Winning picks show your points; losing picks grey out.
       </p>
 
-      <div className="space-y-2">
-        {pickedGames.map((g) => {
-          const pick = userPicks[g.id];
-          const result = userPickResults[g.id];
-          const isFinal = !!g.result;
-          const isCorrect = result?.isCorrect === true;
-          const colors = getTeamColor(pick);
-          // Pending (not yet final): show the pick in its real color, no
-          // points yet, since we don't know the outcome. Final + correct:
-          // real color + points earned. Final + incorrect: greyed out,
-          // nothing shown — matches the plain look every tile had pre-color.
-          const showColor = !isFinal || isCorrect;
-          return (
-            <div
-              key={g.id}
-              className="flex items-center justify-between border rounded px-3 py-2"
-              style={{
-                background: showColor ? colors.bg : "#e5e7eb",
-                color: showColor ? colors.fg : "#6b7280",
-              }}
-            >
-              <span className="text-sm font-bold">
-                {g.awayTeam} @ {g.homeTeam}
-              </span>
-              <span className="text-sm font-bold">
-                {pick}
-                {isFinal && isCorrect && result?.pointsAwarded !== undefined && (
-                  <span> ({result.pointsAwarded})</span>
-                )}
-              </span>
-            </div>
-          );
-        })}
-        {pickedGames.length === 0 && (
-          <p className="text-sm text-gray-500">No picks made yet for Week {currentWeek}.</p>
-        )}
-      </div>
+      {weeks.length === 0 ? (
+        <p className="text-sm text-gray-500">No weeks with games yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="border-collapse">
+            <thead>
+              <tr>
+                {weeks.map((w) => (
+                  <th key={w} className="text-xs font-bold text-gray-600 px-1 pb-2 text-left whitespace-nowrap">
+                    Week {w}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: maxRows }, (_, rowIndex) => (
+                <tr key={rowIndex}>
+                  {weeks.map((w) => {
+                    const game = gamesByWeek.get(w)![rowIndex];
+                    if (!game) return <td key={w} className="p-0.5" />;
+                    const pick = pickByGameId.get(game.id);
+                    if (!pick) {
+                      return (
+                        <td key={w} className="p-0.5">
+                          <div className="w-20 h-9 rounded flex items-center justify-center text-xs text-gray-300 border border-dashed">
+                            —
+                          </div>
+                        </td>
+                      );
+                    }
+                    const isFinal = !!game.result;
+                    const isCorrect = pick.isCorrect === true;
+                    const colors = getTeamColor(pick.pickedTeam);
+                    // Pending: show real color, no points yet (outcome
+                    // unknown). Final + correct: real color + points. Final
+                    // + incorrect: grey, nothing — same rule as My Picks.
+                    const showColor = !isFinal || isCorrect;
+                    return (
+                      <td key={w} className="p-0.5">
+                        <div
+                          className="w-20 h-9 rounded flex items-center justify-center text-xs font-bold"
+                          style={{
+                            background: showColor ? colors.bg : "#e5e7eb",
+                            color: showColor ? colors.fg : "#6b7280",
+                          }}
+                        >
+                          {pick.pickedTeam}
+                          {isFinal && isCorrect && pick.pointsAwarded !== undefined && (
+                            <span>&nbsp;({pick.pointsAwarded})</span>
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+              <tr className="border-t-2">
+                {weeks.map((w) => {
+                  const weekGames = gamesByWeek.get(w)!;
+                  const total = weekGames.reduce((sum, g) => {
+                    const pick = pickByGameId.get(g.id);
+                    return sum + (pick?.isCorrect ? pick.pointsAwarded || 0 : 0);
+                  }, 0);
+                  return (
+                    <td key={w} className="p-1 text-xs font-bold text-gray-700">
+                      {total}
+                    </td>
+                  );
+                })}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
