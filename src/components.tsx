@@ -163,11 +163,15 @@ export function PicksScreen() {
     weeklyLeader,
     leagueMaxWeeklyPoints,
     playerId,
+    isCommissioner,
+    myWeekLocked,
+    setMyWeekLocked,
   } = useLeague();
   const [tbDraft, setTbDraft] = useState<string>(myTiebreakerGuess?.toString() ?? "");
   const [tbSaved, setTbSaved] = useState(false);
 
   const handlePick = (gameId: string, team: string) => {
+    if (myWeekLocked) return;
     submitSinglePick(gameId, team);
   };
 
@@ -196,6 +200,26 @@ export function PicksScreen() {
   return (
     <div className="p-4">
       <WeekSelector currentWeek={currentWeek} officialWeek={league?.currentWeek} onChange={setCurrentWeek} />
+      {isCommissioner && (
+        <div className="mb-3 flex items-center gap-2">
+          <button
+            onClick={() => setMyWeekLocked(!myWeekLocked)}
+            className={`text-xs font-bold px-3 py-1.5 rounded-full ${
+              myWeekLocked
+                ? "bg-gray-200 text-gray-700"
+                : "bg-purple-100 text-purple-700 hover:bg-purple-200"
+            }`}
+          >
+            {myWeekLocked ? "🔒 My picks are locked — click to unlock" : "Lock my picks for this week"}
+          </button>
+          {!myWeekLocked && (
+            <span className="text-xs text-gray-500">
+              Your picks are visible to everyone as you make them — lock when you're
+              actually done deciding.
+            </span>
+          )}
+        </div>
+      )}
       <div className="flex items-start justify-between mb-1">
         <h2 className="text-2xl font-bold">Week {currentWeek} Picks</h2>
         <div className="text-right">
@@ -274,7 +298,7 @@ export function PicksScreen() {
           // will reject anyway.
           const isPastKickoff = !game.timeTBD && !!game.gameTime && new Date(game.gameTime) <= new Date();
           const isLocked = (game.isLocked || isPastKickoff) && !isFinal;
-          const isClickable = !isLocked && !isFinal;
+          const isClickable = !isLocked && !isFinal && !myWeekLocked;
 
           function borderClassFor(abbr: string): string {
             if (picked !== abbr) return "";

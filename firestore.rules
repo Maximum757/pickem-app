@@ -99,6 +99,13 @@ service cloud.firestore {
         allow create, update: if isCommissioner(leagueId);
       }
 
+      match /playerWeekLocks/{lockId} {
+        // Single-doc reads/writes only (id is `${uid}_${week}`, always
+        // fetched by exact known id, never listed/queried) — the id-pattern
+        // check here is safe, unlike the picks collection's list-query case.
+        allow read, create, update: if isSignedIn() && lockId.matches(request.auth.uid + '_.*');
+      }
+
       match /picks/{pickId} {
         // THE core privacy rule: a player can only read their OWN picks.
         //

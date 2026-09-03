@@ -130,6 +130,29 @@ export interface TiebreakerGuessDoc {
   carriedForward?: boolean;
 }
 
+/**
+ * /leagues/{leagueId}/playerWeekLocks/{playerId}_{week}
+ * A player's OWN self-lock on their own picks for one week — separate from
+ * the per-game kickoff lock. Mainly for the commissioner: a deliberate
+ * "these are final" moment before their picks effectively get broadcast
+ * (they're visible to everyone the moment they're made, by design — see
+ * firestore.rules), rather than other players watching them get edited
+ * mid-decision. Any player can use it on their own picks too, though the
+ * per-game kickoff lock is what actually matters for everyone else.
+ */
+export interface PlayerWeekLockDoc {
+  id: string; // `${playerId}_${week}`
+  leagueId: string;
+  playerId: string;
+  week: number;
+  locked: boolean;
+  lockedAt: Timestamp;
+}
+
+export function getPlayerWeekLockId(playerId: string, week: number): string {
+  return `${playerId}_${week}`;
+}
+
 export function getTiebreakerGuessId(playerId: string, week: number): string {
   return `${playerId}_${week}`;
 }

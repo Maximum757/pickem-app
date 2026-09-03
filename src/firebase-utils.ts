@@ -835,6 +835,40 @@ export async function updatePlayerName(leagueId: string, playerId: string, name:
 }
 
 /**
+ * A player's own self-lock on their picks for one week. Separate from the
+ * per-game kickoff lock — this is purely a personal "I'm done deciding"
+ * control, mainly useful for the commissioner (see PlayerWeekLockDoc).
+ */
+export async function getPlayerWeekLock(
+  leagueId: string,
+  playerId: string,
+  week: number
+): Promise<schema.PlayerWeekLockDoc | null> {
+  const lockId = schema.getPlayerWeekLockId(playerId, week);
+  const docRef = doc(db, `leagues/${leagueId}/playerWeekLocks`, lockId);
+  const docSnap = await getDoc(docRef);
+  return (docSnap.exists() ? docSnap.data() : null) as schema.PlayerWeekLockDoc | null;
+}
+
+export async function setPlayerWeekLock(
+  leagueId: string,
+  playerId: string,
+  week: number,
+  locked: boolean
+): Promise<void> {
+  const lockId = schema.getPlayerWeekLockId(playerId, week);
+  const lockRef = doc(db, `leagues/${leagueId}/playerWeekLocks`, lockId);
+  await setDoc(lockRef, {
+    id: lockId,
+    leagueId,
+    playerId,
+    week,
+    locked,
+    lockedAt: Timestamp.now(),
+  } as schema.PlayerWeekLockDoc);
+}
+
+/**
  * Commissioner toggles a player's dues-paid status. Same field-level
  * privacy caveat as email on this same document: Firestore doesn't support
  * field-level rules, so this is technically readable by anyone signed in at

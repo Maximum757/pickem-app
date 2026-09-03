@@ -33,6 +33,8 @@ interface LeagueContextType {
   updateMyName: (name: string) => Promise<void>;
   assignMissedPick: (gameId: string, playerId: string, pickedTeam: string) => Promise<void>;
   setPlayerPaid: (playerId: string, hasPaid: boolean) => Promise<void>;
+  myWeekLocked: boolean;
+  setMyWeekLocked: (locked: boolean) => Promise<void>;
   submitPicks: (picks: Array<{ gameId: string; pickedTeam: string }>) => Promise<void>;
   submitSinglePick: (gameId: string, pickedTeam: string) => Promise<void>;
   submitMyTiebreakerGuess: (guess: number) => Promise<void>;
@@ -178,6 +180,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     { playerId: string; name: string; points: number } | null
   >(null);
   const [myTiebreakerGuess, setMyTiebreakerGuess] = useState<number | null>(null);
+  const [myWeekLocked, setMyWeekLockedState] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -262,6 +265,9 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
 
         const myGuess = await firebaseUtils.getPlayerTiebreakerGuess(leagueId, playerId, currentWeek);
         setMyTiebreakerGuess(myGuess?.guess ?? null);
+
+        const myLock = await firebaseUtils.getPlayerWeekLock(leagueId, playerId, currentWeek);
+        setMyWeekLockedState(myLock?.locked ?? false);
       } catch (err) {
         setError(`Failed to load tiebreaker: ${err}`);
       }
@@ -501,6 +507,16 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const handleSetMyWeekLocked = async (locked: boolean) => {
+    if (!leagueId || !playerId) return;
+    try {
+      await firebaseUtils.setPlayerWeekLock(leagueId, playerId, currentWeek, locked);
+      setMyWeekLockedState(locked);
+    } catch (err) {
+      setError(`Failed to update week lock: ${err}`);
+    }
+  };
+
   const handleReorderGames = async (orderedGameIds: string[]) => {
     if (!leagueId) return;
     const reordered = orderedGameIds
@@ -569,6 +585,8 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         updateMyName: handleUpdateMyName,
         assignMissedPick: handleAssignMissedPick,
         setPlayerPaid: handleSetPlayerPaid,
+        myWeekLocked,
+        setMyWeekLocked: handleSetMyWeekLocked,
         submitPicks: handleSubmitPicks,
         submitSinglePick: handleSubmitSinglePick,
         submitMyTiebreakerGuess: handleSubmitMyTiebreakerGuess,
