@@ -101,6 +101,7 @@ export function PicksScreen() {
   const {
     games,
     userPicks,
+    userPickResults,
     currentWeek,
     loading,
     submitSinglePick,
@@ -126,9 +127,36 @@ export function PicksScreen() {
 
   if (loading) return <div className="p-4">Loading...</div>;
 
+  // How many games this player has actually picked vs. the full slate, and
+  // how they're doing on the ones that have gone final so far — shown as a
+  // quick-glance badge rather than making someone scroll the whole list to
+  // find out.
+  const picksMade = games.filter((g) => !!userPicks[g.id]).length;
+  const totalGames = games.length;
+  const picksComplete = totalGames > 0 && picksMade === totalGames;
+  const weeklyCorrect = games.filter((g) => userPickResults[g.id]?.isCorrect === true).length;
+  const weeklyPoints = games.reduce((sum, g) => sum + (userPickResults[g.id]?.pointsAwarded || 0), 0);
+  const anyFinal = games.some((g) => !!g.result);
+
   return (
     <div className="p-4">
-      <h2 className="text-2xl font-bold mb-1">Week {currentWeek} Picks</h2>
+      <div className="flex items-start justify-between mb-1">
+        <h2 className="text-2xl font-bold">Week {currentWeek} Picks</h2>
+        <div className="text-right">
+          <div
+            className={`text-xs font-bold px-2 py-1 rounded-full inline-block ${
+              picksComplete ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+            }`}
+          >
+            {picksMade} / {totalGames} picked
+          </div>
+          {anyFinal && (
+            <div className="text-xs text-gray-600 mt-1">
+              {weeklyCorrect} correct · {weeklyPoints} pts so far
+            </div>
+          )}
+        </div>
+      </div>
       <p className="text-sm text-gray-600 mb-4">Tap a team to pick — it saves instantly</p>
 
       {/* Always shown — a player wanting to get their picks in early shouldn't
