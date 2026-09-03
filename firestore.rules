@@ -1,0 +1,146 @@
+rules_version = '2';
+
+// This file is the actual privacy enforcement for the app — the UI hiding
+// other players' picks is a courtesy, this is what makes it real. Deploy with:
+//   firebase deploy --only firestore:rules
+// (requires the Firebase CLI, logged into the project this league lives in)
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isCommissioner(leagueId) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/leagues/$(leagueId)).data.commissionerId == request.auth.uid;
+    }
+
+    // A player doc's id IS the auth uid (see AuthContext.tsx) — this is what lets
+    // rules check "is this player's own record" without an extra lookup.
+    function isSelf(playerId) {
+      return isSignedIn() && request.auth.uid == playerId;
+    }
+
+    // A game is open for picks only if it's not manually/result-locked AND
+    // (for games with a known kickoff time) the real clock hasn't passed
+    // kickoff yet. This is what actually enforces "picks lock at kickoff" —
+    // relying on the isLocked field alone only works if a human remembers to
+    // flip it; nothing in this app currently does that automatically, so
+    // without the request.time check here, picks would stay writable past
+    // kickoff until the commissioner manually intervenes. TBD games (no
+    // gameTime yet) have nothing to compare against, so they fall back to
+    // isLocked/isManuallyLocked only.
+    function gameIsOpen(leagueId, gameId) {
+      let g = get(/databases/$(database)/documents/leagues/$(leagueId)/games/$(gameId)).data;
+      return g.isLocked == false &&
+        (g.gameTime == null || request.time < g.gameTime);
+    }
+
+    match /leagues/{leagueId} {
+      allow read: if isSignedIn();
+      allow write: if isCommissioner(leagueId);
+
+      match /players/{playerId} {
+        // Every signed-in league member can see the roster (names, not picks) —
+        // needed for standings, the commissioner hub, etc.
+        allow read: if isSignedIn();
+        // A player can create/update their OWN record (this is what runs at
+        // signup — a brand-new user is never yet the commissioner, so gating
+        // create behind isCommissioner() would make every signup silently
+        // fail its own profile write). The commissioner can also create or
+        // remove players directly (adding/removing someone from the league).
+        allow create: if isSelf(playerId) || isCommissioner(leagueId);
+        allow update: if isSelf(playerId);
+        allow delete: if isCommissioner(leagueId);
+      }
+
+      match /games/{gameId} {
+        allow read: if isSignedIn();
+        // Schedule, results, reordering, TBD/lock status — commissioner only.
+        allow write: if isCommissioner(leagueId);
+      }
+
+      // Public aggregate split once a game locks — see GamePickCountsDoc in
+      // firestore-schema.ts for why this is the one place pick-distribution
+      // data is readable by everyone rather than commissioner-only.
+      match /gamePickCounts/{gameId} {
+        allow read: if isSignedIn();
+        allow write: if isCommissioner(leagueId);
+      }
+
+      match /tiebreakerGuesses/{guessId} {
+        // A player can read/write only their own guess (id is `${uid}_${week}`).
+        allow read, create, update: if isSignedIn() &&
+          guessId.matches(request.auth.uid + '_.*');
+        // Commissioner can read all guesses (to show "X / Y entered" —
+        // never the guess values themselves in that view).
+        allow read: if isCommissioner(leagueId);
+      }
+
+      match /picks/{pickId} {
+        // THE core privacy rule: a player can only read their OWN picks.
+        //
+        // This checks resource.data.playerId, NOT the document id — even
+        // though pick ids are `${playerId}_${gameId}` and an id-prefix check
+        // reads as more obviously "theirs." Firestore rejects (not
+        // partially-filters) a list/query request unless it can statically
+        // prove every possible result satisfies the rule using the QUERY'S
+        // OWN FILTERS. getPlayerWeeklyPicks() queries
+        // where("playerId","==",uid) — Firestore can match that filter
+        // against resource.data.playerId here and prove it safe. It has no
+        // way to connect a data-field query filter to a document-ID pattern
+        // rule, so an id-based rule fails every list query outright with
+        // permission-denied, even for entirely legitimate results.
+        allow read: if isSignedIn() && resource.data.playerId == request.auth.uid;
+        // The commissioner can also read all picks — needed for the
+        // "who's picked" progress view and per-game reminder lists, but note
+        // that view only ever surfaces counts/status, never pick content.
+        // This branch doesn't depend on resource.data at all, so it's
+        // uniformly provable across the whole collection — no list-query
+        // issue here.
+        allow read: if isCommissioner(leagueId);
+
+        // A player can only create their own pick, and only while the game
+        // it's for is still open (not locked). This is server-side — it's
+        // what actually prevents a late pick, not just a disabled button.
+        // Uses request.resource.data (the incoming write), not
+        // resource.data — on a create, the document doesn't exist yet, so
+        // resource.data would be null.
+        allow create: if isSignedIn() &&
+          pickId.matches(request.auth.uid + '_.*') &&
+          request.resource.data.playerId == request.auth.uid &&
+          gameIsOpen(leagueId, request.resource.data.gameId);
+
+        // Updating an existing pick (changing your mind before lock) reads
+        // the CURRENT doc's data (resource.data) — the doc already exists here.
+        allow update: if isSignedIn() &&
+          pickId.matches(request.auth.uid + '_.*') &&
+          resource.data.playerId == request.auth.uid &&
+          gameIsOpen(leagueId, resource.data.gameId);
+
+        // Scoring (isCorrect, pointsAwarded) is written by the commissioner's
+        // scoreWeek() batch, not by players.
+        allow update: if isCommissioner(leagueId) &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['isCorrect', 'pointsAwarded']);
+      }
+
+      match /weeklyTiebreakers/{week} {
+        allow read: if isSignedIn();
+        allow write: if isCommissioner(leagueId);
+      }
+
+      match /standings/{season} {
+        allow read: if isSignedIn();
+        allow write: if isCommissioner(leagueId);
+      }
+
+      match /weeklyScores/{week} {
+        allow read: if isSignedIn();
+        allow write: if isCommissioner(leagueId);
+      }
+    }
+  }
+}
