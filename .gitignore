@@ -7,13 +7,22 @@ yarn-error.log*
 # Build output
 dist/
 dist-engine/
+dist-seed/
+dist-export/
 .next/
 *.tsbuildinfo
+
+# Local backups (personal data exports — not for git)
+backups/
 
 # Environment variables
 .env
 .env.local
 .env.*.local
+
+# Firebase service account key (used only by the local seed script — never commit this)
+serviceAccountKey.json
+*service-account*.json
 
 # IDE
 .vscode/
@@ -33,4 +42,3 @@ coverage/
 # Logs
 logs/
 *.log
-serviceAccountKey.json

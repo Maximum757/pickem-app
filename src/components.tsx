@@ -999,7 +999,7 @@ export function WeeklySummary() {
 type ViewType = "picks" | "standings" | "commissioner" | "summary";
 
 export function App() {
-  const { leagueId, playerId, league, loading, error } = useLeague();
+  const { leagueId, playerId, league, loading, error, isCommissioner } = useLeague();
   const [view, setView] = useState<ViewType>("picks");
 
   if (!leagueId || !playerId) {
@@ -1047,26 +1047,30 @@ export function App() {
             >
               Standings
             </button>
-            <button
-              onClick={() => setView("commissioner")}
-              className={`py-2 px-4 rounded font-medium transition ${
-                view === "commissioner"
-                  ? "bg-blue-500 text-white"
-                  : "bg-gray-200 hover:bg-gray-300"
-              }`}
-            >
-              Commissioner
-            </button>
-            <button
-              onClick={() => setView("summary")}
-              className={`py-2 px-4 rounded font-medium transition ${
-                view === "summary"
-                  ? "bg-blue-500 text-white"
-                  : "bg-gray-200 hover:bg-gray-300"
-              }`}
-            >
-              Weekly Summary
-            </button>
+            {isCommissioner && (
+              <button
+                onClick={() => setView("commissioner")}
+                className={`py-2 px-4 rounded font-medium transition ${
+                  view === "commissioner"
+                    ? "bg-blue-500 text-white"
+                    : "bg-gray-200 hover:bg-gray-300"
+                }`}
+              >
+                Commissioner
+              </button>
+            )}
+            {isCommissioner && (
+              <button
+                onClick={() => setView("summary")}
+                className={`py-2 px-4 rounded font-medium transition ${
+                  view === "summary"
+                    ? "bg-blue-500 text-white"
+                    : "bg-gray-200 hover:bg-gray-300"
+                }`}
+              >
+                Weekly Summary
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1075,8 +1079,8 @@ export function App() {
         {loading && <div className="p-4 text-gray-600">Loading...</div>}
         {!loading && view === "picks" && <PicksScreen />}
         {!loading && view === "standings" && <StandingsScreen />}
-        {!loading && view === "commissioner" && <CommissionerDashboard />}
-        {!loading && view === "summary" && <WeeklySummary />}
+        {!loading && view === "commissioner" && isCommissioner && <CommissionerDashboard />}
+        {!loading && view === "summary" && isCommissioner && <WeeklySummary />}
       </div>
     </div>
   );
