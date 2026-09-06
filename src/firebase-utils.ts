@@ -219,6 +219,7 @@ export async function submitPicks(
         pickedTeam,
         isWildcard: false,
         submittedAt: Timestamp.now(),
+        visibleToAll: false,
       } as schema.PickDoc,
       { merge: true }
     );
@@ -287,6 +288,67 @@ export async function recomputeGamePickCounts(leagueId: string, gameId: string):
     counts,
     updatedAt: Timestamp.now(),
   } as schema.GamePickCountsDoc);
+}
+
+/**
+ * Marks every pick for one game as visible to everyone — call this
+ * whenever a game's isLocked flips to true (every call site that does that
+ * should call this right alongside it). This denormalized write is what
+ * the picks read rule actually checks now (resource.data.visibleToAll ==
+ * true), replacing an earlier version that tried to compute this at read
+ * time with get() calls — that approach repeatedly failed for regular
+ * (non-commissioner) accounts on broad list queries in real testing.
+ */
+export async function markPicksVisibleForGame(leagueId: string, gameId: string): Promise<void> {
+  const picks = await getGamePicks(leagueId, gameId);
+  if (picks.length === 0) return;
+  const batch = writeBatch(db);
+  picks.forEach((p) => {
+    const pickRef = doc(db, `leagues/${leagueId}/picks`, p.id);
+    batch.update(pickRef, { visibleToAll: true });
+  });
+  await batch.commit();
+}
+
+/**
+ * Marks/unmarks the commissioner's own picks for one week as visible —
+ * call this from setPlayerWeekLock's commissioner branch. Locking always
+ * makes all of that week's commissioner picks visible. Unlocking only
+ * hides picks for games that haven't independently locked yet — once a
+ * GAME locks, that pick stays visible regardless of this toggle (matches
+ * the existing "anyone's picks for a locked game are public" rule, which
+ * this doesn't override).
+ */
+export async function updateCommissionerPicksVisibility(
+  leagueId: string,
+  commissionerId: string,
+  week: number,
+  locked: boolean
+): Promise<void> {
+  const picks = await getPlayerWeeklyPicks(leagueId, commissionerId, week);
+  if (picks.length === 0) return;
+
+  const batch = writeBatch(db);
+  if (locked) {
+    picks.forEach((p) => {
+      const pickRef = doc(db, `leagues/${leagueId}/picks`, p.id);
+      batch.update(pickRef, { visibleToAll: true });
+    });
+  } else {
+    const gameIds = Array.from(new Set(picks.map((p) => p.gameId)));
+    const gameDocs = await Promise.all(
+      gameIds.map((gid) => getDoc(doc(db, `leagues/${leagueId}/games`, gid)))
+    );
+    const lockedGameIds = new Set(
+      gameDocs.filter((d) => d.exists() && (d.data() as schema.GameDoc).isLocked).map((d) => d.id)
+    );
+    picks.forEach((p) => {
+      if (lockedGameIds.has(p.gameId)) return; // stays visible — the game itself locked
+      const pickRef = doc(db, `leagues/${leagueId}/picks`, p.id);
+      batch.update(pickRef, { visibleToAll: false });
+    });
+  }
+  await batch.commit();
 }
 
 /**
@@ -436,6 +498,7 @@ export async function enterGameResult(
   // A result implies the game is over, so this is also a safe point to
   // capture the final pick split for the picks screen / weekly summary.
   await recomputeGamePickCounts(leagueId, gameId);
+  await markPicksVisibleForGame(leagueId, gameId);
   // Score this game and refresh standings immediately — see
   // scoreGameImmediately() for why this no longer waits for a manual
   // "Score Week" action.
@@ -983,6 +1046,11 @@ export async function assignMissedPick(
     pickedTeam,
     isWildcard: true,
     submittedAt: Timestamp.now(),
+    // assignMissedPick only ever runs once a game's already locked (that's
+    // what unlocks the "Fill in" UI in the first place), so this pick
+    // should be visible right away, not wait for some future lock event
+    // that's already happened.
+    visibleToAll: true,
   } as schema.PickDoc);
 
   const gameRef = doc(db, `leagues/${leagueId}/games`, gameId);
@@ -1007,6 +1075,7 @@ export async function lockGame(leagueId: string, gameId: string): Promise<void> 
   const gameRef = doc(db, `leagues/${leagueId}/games`, gameId);
   await updateDoc(gameRef, { isLocked: true });
   await recomputeGamePickCounts(leagueId, gameId);
+  await markPicksVisibleForGame(leagueId, gameId);
 }
 
 /**
@@ -1036,6 +1105,7 @@ export async function lockAllPassedKickoffGames(leagueId: string, week: number):
   // Pick counts per game are cheap enough to just recompute individually
   // after the batch, same as the single-game lockGame() does.
   await Promise.all(toLock.map((g) => recomputeGamePickCounts(leagueId, g.id)));
+  await Promise.all(toLock.map((g) => markPicksVisibleForGame(leagueId, g.id)));
 
   return toLock.length;
 }
@@ -1099,5 +1169,6 @@ export async function setManualLock(
   });
   if (locked) {
     await recomputeGamePickCounts(leagueId, gameId);
+    await markPicksVisibleForGame(leagueId, gameId);
   }
 }

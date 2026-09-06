@@ -616,6 +616,12 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     try {
       await firebaseUtils.setPlayerWeekLock(leagueId, playerId, currentWeek, locked);
       setMyWeekLockedState(locked);
+      // Only the commissioner's own week-lock actually reveals anything —
+      // a regular player locking their own picks (also available to
+      // anyone, not just the commissioner) doesn't broadcast them early.
+      if (league?.commissionerId === playerId) {
+        await firebaseUtils.updateCommissionerPicksVisibility(leagueId, playerId, currentWeek, locked);
+      }
     } catch (err) {
       setError(`Failed to update week lock: ${err}`);
     }

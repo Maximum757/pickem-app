@@ -34,9 +34,9 @@ service cloud.firestore {
     // isLocked/isManuallyLocked only.
     function gameIsOpen(leagueId, gameId) {
       let path = /databases/$(database)/documents/leagues/$(leagueId)/games/$(gameId);
-      let g = exists(path) ? get(path).data : null;
-      return g != null && g.isLocked == false &&
-        (g.gameTime == null || request.time < g.gameTime);
+      return exists(path) &&
+        get(path).data.isLocked == false &&
+        (get(path).data.gameTime == null || request.time < get(path).data.gameTime);
     }
 
     // A tiebreaker is open for guesses if no question has been set yet for
@@ -45,28 +45,6 @@ service cloud.firestore {
     function tiebreakerOpen(leagueId, week) {
       let path = /databases/$(database)/documents/leagues/$(leagueId)/weeklyTiebreakers/$(string(week));
       return !exists(path) || get(path).data.locked != true;
-    }
-
-    // Has this player explicitly locked their own picks for this week? (see
-    // PlayerWeekLockDoc / setPlayerWeekLock in firebase-utils.ts). Defaults
-    // to false if they've never touched the lock control — no doc means
-    // not locked, not an error.
-    function hasLockedOwnWeek(leagueId, playerId, week) {
-      let path = /databases/$(database)/documents/leagues/$(leagueId)/playerWeekLocks/$(playerId + '_' + string(week));
-      return exists(path) && get(path).data.locked == true;
-    }
-
-    // Whether the game a pick belongs to has locked — guarded with
-    // exists() first, unlike a bare get(). A pick whose gameId points at a
-    // game document that's since been deleted or never existed (stale data
-    // from re-seeding/testing) would make a bare get() throw instead of
-    // evaluating false, which can fail an entire list query, not just
-    // exclude that one document. This is exactly that kind of bug, found
-    // after a real report of standings failing to load for a
-    // non-commissioner account.
-    function gameHasLocked(leagueId, gameId) {
-      let path = /databases/$(database)/documents/leagues/$(leagueId)/games/$(gameId);
-      return exists(path) && get(path).data.isLocked == true;
     }
 
     match /leagues/{leagueId} {
@@ -151,23 +129,20 @@ service cloud.firestore {
         // uniformly provable across the whole collection — no list-query
         // issue here.
         allow read: if isCommissioner(leagueId);
-        // Everyone can also see the commissioner's own picks for a week
-        // ONCE THE COMMISSIONER HAS LOCKED THAT WEEK (see hasLockedOwnWeek
-        // above and the "Lock my picks" button on the picks screen) — a
-        // deliberate broadcast moment, not an instant reveal on every click.
-        // Also: anyone's picks for a game that's already locked — this is
-        // what makes the player-facing Weekly Summary tab possible without
-        // breaking the core privacy rule for still-open games. All three
-        // conditions here are per-document but based on real data fields
-        // (get() calls to fixed/derived paths) — not a document-ID pattern
-        // trick, which is the kind of condition Firestore can safely
-        // evaluate per-document in a list query. This is the most complex
-        // rule in the whole file; test it for real with a second account
-        // before trusting it fully.
-        allow read: if isSignedIn() &&
-          ((resource.data.playerId == get(/databases/$(database)/documents/leagues/$(leagueId)).data.commissionerId &&
-            hasLockedOwnWeek(leagueId, resource.data.playerId, resource.data.week)) ||
-           gameHasLocked(leagueId, resource.data.gameId));
+        // Everyone can also see a pick once it's been explicitly marked
+        // visible — either because the game it belongs to has locked, or
+        // (for the commissioner's own picks specifically) because they've
+        // locked their own week early. This flag is set directly by
+        // markPicksVisibleForGame() / updateCommissionerPicksVisibility()
+        // in firebase-utils.ts at the moment either of those things
+        // happens — a PURE resource.data field check, no get() calls.
+        // A previous version tried to compute this at read time with
+        // get() calls against the game/league docs; that repeatedly failed
+        // for regular (non-commissioner) accounts on broad list queries in
+        // real testing, so this denormalized version replaces it — same
+        // query-filter-matches-rule-condition pattern already proven to
+        // work for the "own picks" branch above.
+        allow read: if isSignedIn() && resource.data.visibleToAll == true;
 
         // A player can only create their own pick, and only while the game
         // it's for is still open (not locked). This is server-side — it's

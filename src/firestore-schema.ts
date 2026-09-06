@@ -131,6 +131,18 @@ export interface PickDoc {
   submittedAt: Timestamp;
   isCorrect?: boolean; // Filled after result entered
   pointsAwarded?: number; // Filled after result + scoring
+  // Denormalized, not derived at read time. Earlier versions of the reveal
+  // rule tried to compute "should this pick be visible to everyone yet" at
+  // READ time using get() calls against the game/league/lock docs — that
+  // repeatedly failed for regular (non-commissioner) accounts on broad list
+  // queries in real testing, strongly suggesting Firestore doesn't reliably
+  // allow that pattern for list reads the way isolated single-document
+  // checks do. This field is set directly, at the exact moments a game
+  // locks or the commissioner locks their own week (see
+  // markPicksVisibleForGame / updateCommissionerPicksVisibility in
+  // firebase-utils.ts) — the same query-filter-matches-rule-condition
+  // pattern already confirmed working for "see your own picks."
+  visibleToAll?: boolean;
 }
 
 /**

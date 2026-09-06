@@ -2,14 +2,15 @@
  * Auto-lock script
  *
  * Sets isLocked: true on any game whose kickoff has already passed but
- * hasn't been flipped yet. This is the actual mechanism behind "games lock
- * automatically at kickoff" — picks were already blocked at kickoff by the
- * security rules regardless of this field, but OTHER players' picks only
- * get revealed to everyone (Weekly Summary) once isLocked is genuinely
- * true, and nothing was ever setting it automatically. Meant to run
- * frequently (see .github/workflows/auto-lock-games.yml) so the gap
- * between "kickoff happens" and "isLocked actually flips" stays small —
- * not instant, but not dependent on anyone opening the app either.
+ * hasn't been flipped yet, and marks that game's picks visibleToAll —
+ * the actual mechanism behind "games lock automatically at kickoff." Picks
+ * were already blocked at kickoff by the security rules regardless of this
+ * field, but OTHER players' picks only get revealed to everyone (Weekly
+ * Summary, Standings) once visibleToAll is genuinely set on each pick —
+ * nothing was ever setting either field automatically before this. Meant
+ * to run frequently (see .github/workflows/auto-lock-games.yml) so the gap
+ * between "kickoff happens" and "picks actually reveal" stays small — not
+ * instant, but not dependent on anyone opening the app either.
  *
  * Also available as an on-demand manual action from the Commissioner
  * Dashboard ("Lock all games past kickoff") for anyone who wants it to
@@ -63,6 +64,24 @@ async function lockPassedGames() {
     batch.update(doc.ref, { isLocked: true });
   });
   await batch.commit();
+
+  // Mark every pick for each newly-locked game as visible — same
+  // denormalized field the app's own markPicksVisibleForGame() sets, kept
+  // in sync here since this script runs independently via GitHub Actions.
+  for (const gameDoc of toLock) {
+    const picksSnap = await db
+      .collection("leagues")
+      .doc(LEAGUE_ID)
+      .collection("picks")
+      .where("gameId", "==", gameDoc.id)
+      .get();
+    if (picksSnap.empty) continue;
+    const pickBatch = db.batch();
+    picksSnap.docs.forEach((pickDoc) => {
+      pickBatch.update(pickDoc.ref, { visibleToAll: true });
+    });
+    await pickBatch.commit();
+  }
 
   console.log(`\nLocked ${toLock.length} game(s).`);
 }
