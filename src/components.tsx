@@ -1084,22 +1084,35 @@ export function CommissionerDashboard() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [fillingGameId, setFillingGameId] = useState<string | null>(null);
 
-  React.useEffect(() => {
+  const refreshPickedByGame = React.useCallback(async () => {
     if (!leagueId) return;
-    (async () => {
-      const [allPicks, allGuesses] = await Promise.all([
-        firebaseUtils.getAllPicksForWeek(leagueId, currentWeek),
-        firebaseUtils.getAllTiebreakerGuessesForWeek(leagueId, currentWeek),
-      ]);
-      const byGame: { [gameId: string]: Set<string> } = {};
-      allPicks.forEach((p) => {
-        if (!byGame[p.gameId]) byGame[p.gameId] = new Set();
-        byGame[p.gameId].add(p.playerId);
-      });
-      setPickedByGame(byGame);
-      setTiebreakerEnteredBy(new Set(allGuesses.map((g) => g.playerId)));
-    })();
+    const [allPicks, allGuesses] = await Promise.all([
+      firebaseUtils.getAllPicksForWeek(leagueId, currentWeek),
+      firebaseUtils.getAllTiebreakerGuessesForWeek(leagueId, currentWeek),
+    ]);
+    const byGame: { [gameId: string]: Set<string> } = {};
+    allPicks.forEach((p) => {
+      if (!byGame[p.gameId]) byGame[p.gameId] = new Set();
+      byGame[p.gameId].add(p.playerId);
+    });
+    setPickedByGame(byGame);
+    setTiebreakerEnteredBy(new Set(allGuesses.map((g) => g.playerId)));
   }, [leagueId, currentWeek]);
+
+  React.useEffect(() => {
+    refreshPickedByGame();
+  }, [refreshPickedByGame]);
+
+  // Wraps the context action so the "missing" list this screen shows
+  // actually updates afterward — assignMissedPick() only ever refreshed
+  // games/standings, never this screen's own pickedByGame state, so a
+  // successful assignment looked like nothing happened: the player stayed
+  // listed as missing and the buttons appeared to do nothing on click.
+  const handleAssignAndRefresh = async (gameId: string, forPlayerId: string, pickedTeam: string) => {
+    await assignMissedPick(gameId, forPlayerId, pickedTeam);
+    await refreshPickedByGame();
+  };
+
 
   const copyMissingContacts = (key: string, missingPlayerIds: string[]) => {
     const emails = players
@@ -1565,14 +1578,14 @@ export function CommissionerDashboard() {
                         <div key={mPlayerId} className="flex items-center gap-2">
                           <span className="text-xs flex-1 truncate">{player?.name || mPlayerId}</span>
                           <button
-                            onClick={() => assignMissedPick(game.id, mPlayerId, game.awayTeam)}
+                            onClick={() => handleAssignAndRefresh(game.id, mPlayerId, game.awayTeam)}
                             style={{ background: awayColors.bg, color: awayColors.fg }}
                             className="text-xs font-bold px-2 py-1 rounded"
                           >
                             {game.awayTeam}
                           </button>
                           <button
-                            onClick={() => assignMissedPick(game.id, mPlayerId, game.homeTeam)}
+                            onClick={() => handleAssignAndRefresh(game.id, mPlayerId, game.homeTeam)}
                             style={{ background: homeColors.bg, color: homeColors.fg }}
                             className="text-xs font-bold px-2 py-1 rounded"
                           >

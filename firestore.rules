@@ -33,8 +33,9 @@ service cloud.firestore {
     // gameTime yet) have nothing to compare against, so they fall back to
     // isLocked/isManuallyLocked only.
     function gameIsOpen(leagueId, gameId) {
-      let g = get(/databases/$(database)/documents/leagues/$(leagueId)/games/$(gameId)).data;
-      return g.isLocked == false &&
+      let path = /databases/$(database)/documents/leagues/$(leagueId)/games/$(gameId);
+      let g = exists(path) ? get(path).data : null;
+      return g != null && g.isLocked == false &&
         (g.gameTime == null || request.time < g.gameTime);
     }
 
@@ -53,6 +54,19 @@ service cloud.firestore {
     function hasLockedOwnWeek(leagueId, playerId, week) {
       let path = /databases/$(database)/documents/leagues/$(leagueId)/playerWeekLocks/$(playerId + '_' + string(week));
       return exists(path) && get(path).data.locked == true;
+    }
+
+    // Whether the game a pick belongs to has locked — guarded with
+    // exists() first, unlike a bare get(). A pick whose gameId points at a
+    // game document that's since been deleted or never existed (stale data
+    // from re-seeding/testing) would make a bare get() throw instead of
+    // evaluating false, which can fail an entire list query, not just
+    // exclude that one document. This is exactly that kind of bug, found
+    // after a real report of standings failing to load for a
+    // non-commissioner account.
+    function gameHasLocked(leagueId, gameId) {
+      let path = /databases/$(database)/documents/leagues/$(leagueId)/games/$(gameId);
+      return exists(path) && get(path).data.isLocked == true;
     }
 
     match /leagues/{leagueId} {
@@ -153,7 +167,7 @@ service cloud.firestore {
         allow read: if isSignedIn() &&
           ((resource.data.playerId == get(/databases/$(database)/documents/leagues/$(leagueId)).data.commissionerId &&
             hasLockedOwnWeek(leagueId, resource.data.playerId, resource.data.week)) ||
-           get(/databases/$(database)/documents/leagues/$(leagueId)/games/$(resource.data.gameId)).data.isLocked == true);
+           gameHasLocked(leagueId, resource.data.gameId));
 
         // A player can only create their own pick, and only while the game
         // it's for is still open (not locked). This is server-side — it's
