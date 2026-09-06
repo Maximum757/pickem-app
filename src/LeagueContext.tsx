@@ -529,6 +529,11 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
       setStandings(mergeStandingsWithRoster(standingsData, players));
     } catch (err) {
       setError(`Failed to assign missed pick: ${err}`);
+      // Re-thrown (not just swallowed into the global error state) so a
+      // caller doing its own local "did this actually work" UI — like the
+      // Commissioner Dashboard's fill-in panel — can tell the difference
+      // between a successful assignment and a silently failed one.
+      throw err;
     }
   };
 

@@ -14,14 +14,23 @@ import * as schema from "./firestore-schema";
 // options rather than a bare toLocaleString() because the default includes
 // seconds, which is just noise for a kickoff time nobody needs to the
 // second.
+// Games are always discussed/scheduled in Eastern time regardless of who's
+// looking — explicitly pinning the timezone here means this can't silently
+// drift 4-5 hours off if a viewer's device happens to be set to a
+// different timezone (which is exactly what was happening before this: no
+// timeZone override meant it fell back to whatever the device reported,
+// UTC included).
 function formatKickoff(date: Date): string {
-  return date.toLocaleString(undefined, {
-    month: "numeric",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return (
+    date.toLocaleString(undefined, {
+      timeZone: "America/New_York",
+      month: "numeric",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }) + " ET"
+  );
 }
 
 // React only re-runs a component's render when something actually triggers
@@ -1078,11 +1087,23 @@ export function CommissionerDashboard() {
 
   // Who has/hasn't picked each game, and who has/hasn't entered the
   // tiebreaker — commissioner-only data (players list has emails for the
-  // per-game "copy contacts" reminder action).
+  // per-game "copy contacts" reminder action). pickDetailsByGame keeps the
+  // actual pick + whether it was wildcard-assigned, so an already-assigned
+  // pick can be shown (and changed) rather than only ever tracking who's
+  // picked at all.
   const [pickedByGame, setPickedByGame] = useState<{ [gameId: string]: Set<string> }>({});
+  const [pickDetailsByGame, setPickDetailsByGame] = useState<{
+    [gameId: string]: { [playerId: string]: { pickedTeam: string; isWildcard: boolean } };
+  }>({});
   const [tiebreakerEnteredBy, setTiebreakerEnteredBy] = useState<Set<string>>(new Set());
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [fillingGameId, setFillingGameId] = useState<string | null>(null);
+  // Per-row UI state for the fill-in panel, keyed by `${gameId}_${playerId}`
+  // — gives real feedback on click instead of the button silently doing
+  // nothing until a page reload happened to show the result.
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [savedKey, setSavedKey] = useState<string | null>(null);
+  const [assignError, setAssignError] = useState<string | null>(null);
 
   const refreshPickedByGame = React.useCallback(async () => {
     if (!leagueId) return;
@@ -1091,11 +1112,17 @@ export function CommissionerDashboard() {
       firebaseUtils.getAllTiebreakerGuessesForWeek(leagueId, currentWeek),
     ]);
     const byGame: { [gameId: string]: Set<string> } = {};
+    const detailsByGame: {
+      [gameId: string]: { [playerId: string]: { pickedTeam: string; isWildcard: boolean } };
+    } = {};
     allPicks.forEach((p) => {
       if (!byGame[p.gameId]) byGame[p.gameId] = new Set();
       byGame[p.gameId].add(p.playerId);
+      if (!detailsByGame[p.gameId]) detailsByGame[p.gameId] = {};
+      detailsByGame[p.gameId][p.playerId] = { pickedTeam: p.pickedTeam, isWildcard: !!p.isWildcard };
     });
     setPickedByGame(byGame);
+    setPickDetailsByGame(detailsByGame);
     setTiebreakerEnteredBy(new Set(allGuesses.map((g) => g.playerId)));
   }, [leagueId, currentWeek]);
 
@@ -1103,14 +1130,25 @@ export function CommissionerDashboard() {
     refreshPickedByGame();
   }, [refreshPickedByGame]);
 
-  // Wraps the context action so the "missing" list this screen shows
-  // actually updates afterward — assignMissedPick() only ever refreshed
-  // games/standings, never this screen's own pickedByGame state, so a
-  // successful assignment looked like nothing happened: the player stayed
-  // listed as missing and the buttons appeared to do nothing on click.
+  // Wraps the context action with real per-row feedback: a "Saving…" state
+  // while the write is in flight, a brief "✓ Saved" confirmation once the
+  // refreshed data actually confirms it landed, and a visible error right
+  // in this panel if it didn't — rather than the button appearing to do
+  // nothing either way, which was the actual bug being fixed here.
   const handleAssignAndRefresh = async (gameId: string, forPlayerId: string, pickedTeam: string) => {
-    await assignMissedPick(gameId, forPlayerId, pickedTeam);
-    await refreshPickedByGame();
+    const key = `${gameId}_${forPlayerId}`;
+    setSavingKey(key);
+    setAssignError(null);
+    try {
+      await assignMissedPick(gameId, forPlayerId, pickedTeam);
+      await refreshPickedByGame();
+      setSavedKey(key);
+      setTimeout(() => setSavedKey((k) => (k === key ? null : k)), 2000);
+    } catch (err) {
+      setAssignError(`Failed to save pick: ${err}`);
+    } finally {
+      setSavingKey((k) => (k === key ? null : k));
+    }
   };
 
 
@@ -1522,7 +1560,17 @@ export function CommissionerDashboard() {
             // having passed, only an explicit lock/result action.
             const gameIsPastKickoff =
               !game.timeTBD && !!game.gameTime && new Date(game.gameTime) <= now;
-            const canFillIn = (game.isLocked || gameIsPastKickoff) && missing.length > 0;
+            const gameDetails = pickDetailsByGame[game.id] || {};
+            const wildcardAssignedIds = Object.keys(gameDetails).filter(
+              (pid) => gameDetails[pid].isWildcard
+            );
+            // Anyone the panel should let the commissioner set/change a pick
+            // for: still missing entirely, or already has a wildcard-
+            // assigned pick that might need correcting. A player's own
+            // deliberate pick isn't editable here — only ones the
+            // commissioner made on someone's behalf.
+            const editablePlayerIds = Array.from(new Set([...missing, ...wildcardAssignedIds]));
+            const canFillIn = (game.isLocked || gameIsPastKickoff) && editablePlayerIds.length > 0;
             return (
               <div key={game.id} className="border rounded bg-white px-3 py-2 mb-1">
                 <div className="flex items-center justify-between">
@@ -1568,26 +1616,41 @@ export function CommissionerDashboard() {
                 {isExpanded && canFillIn && (
                   <div className="mt-2 pt-2 border-t space-y-2">
                     <p className="text-xs text-gray-500">
-                      Assign a pick on their behalf — marked as a wildcard/assigned pick.
+                      Assign or fix a pick on their behalf — marked as a wildcard/assigned pick.
                     </p>
-                    {missing.map((mPlayerId) => {
-                      const player = players.find((p) => p.id === mPlayerId);
+                    {assignError && (
+                      <p className="text-xs text-red-600 font-semibold">{assignError}</p>
+                    )}
+                    {editablePlayerIds.map((ePlayerId) => {
+                      const player = players.find((p) => p.id === ePlayerId);
                       const awayColors = getTeamColor(game.awayTeam);
                       const homeColors = getTeamColor(game.homeTeam);
+                      const current = gameDetails[ePlayerId]?.pickedTeam;
+                      const rowKey = `${game.id}_${ePlayerId}`;
+                      const isSaving = savingKey === rowKey;
+                      const justSaved = savedKey === rowKey;
                       return (
-                        <div key={mPlayerId} className="flex items-center gap-2">
-                          <span className="text-xs flex-1 truncate">{player?.name || mPlayerId}</span>
+                        <div key={ePlayerId} className="flex items-center gap-2">
+                          <span className="text-xs flex-1 truncate">{player?.name || ePlayerId}</span>
+                          {justSaved && <span className="text-xs text-green-600 font-semibold">✓</span>}
+                          {isSaving && <span className="text-xs text-gray-400">Saving…</span>}
                           <button
-                            onClick={() => handleAssignAndRefresh(game.id, mPlayerId, game.awayTeam)}
+                            onClick={() => handleAssignAndRefresh(game.id, ePlayerId, game.awayTeam)}
+                            disabled={isSaving}
                             style={{ background: awayColors.bg, color: awayColors.fg }}
-                            className="text-xs font-bold px-2 py-1 rounded"
+                            className={`text-xs font-bold px-2 py-1 rounded disabled:opacity-50 ${
+                              current === game.awayTeam ? "ring-2 ring-offset-1 ring-blue-500" : ""
+                            }`}
                           >
                             {game.awayTeam}
                           </button>
                           <button
-                            onClick={() => handleAssignAndRefresh(game.id, mPlayerId, game.homeTeam)}
+                            onClick={() => handleAssignAndRefresh(game.id, ePlayerId, game.homeTeam)}
+                            disabled={isSaving}
                             style={{ background: homeColors.bg, color: homeColors.fg }}
-                            className="text-xs font-bold px-2 py-1 rounded"
+                            className={`text-xs font-bold px-2 py-1 rounded disabled:opacity-50 ${
+                              current === game.homeTeam ? "ring-2 ring-offset-1 ring-blue-500" : ""
+                            }`}
                           >
                             {game.homeTeam}
                           </button>
