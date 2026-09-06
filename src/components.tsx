@@ -561,7 +561,7 @@ export function MySummaryScreen() {
                     return (
                       <td key={w} className="p-0.5">
                         <div
-                          className="w-20 h-9 rounded flex items-center justify-center text-xs font-bold"
+                          className="w-20 h-9 rounded flex items-center justify-center text-center text-xs font-bold"
                           style={{
                             background: showColor ? colors.bg : "#e5e7eb",
                             color: showColor ? colors.fg : "#6b7280",
@@ -793,26 +793,41 @@ export function StandingsScreen() {
   const [allGames, setAllGames] = useState<schema.GameDoc[]>([]);
   const [allPicks, setAllPicks] = useState<schema.PickDoc[]>([]);
   const [loadingGrid, setLoadingGrid] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   React.useEffect(() => {
     if (!leagueId) return;
     setLoadingGrid(true);
+    setLoadError(null);
     (async () => {
-      const [gamesData, picksData] = await Promise.all([
-        firebaseUtils.getAllGamesForLeague(leagueId),
-        firebaseUtils.getAllPicksForLeague(leagueId),
-      ]);
-      setAllGames(gamesData);
-      setAllPicks(picksData);
-      setLoadingGrid(false);
+      try {
+        const gamesData = await firebaseUtils.getAllGamesForLeague(leagueId);
+        setAllGames(gamesData);
+
+        // Fetched per-week rather than as one unfiltered query across the
+        // whole picks collection — this is the exact same pattern Weekly
+        // Summary already uses successfully for a regular (non-commissioner)
+        // account. A single unfiltered query was untested against that case
+        // and risked hanging (see the try/catch here, which is also new —
+        // without it, any failure left this screen stuck on "Loading..."
+        // forever instead of showing an actual error).
+        const weeksInLeague = Array.from(new Set(gamesData.map((g) => g.week))).sort((a, b) => a - b);
+        const picksByWeek = await Promise.all(
+          weeksInLeague.map((w) => firebaseUtils.getAllPicksForWeek(leagueId, w))
+        );
+        setAllPicks(picksByWeek.flat());
+      } catch (err) {
+        setLoadError(`Failed to load standings: ${err}`);
+      } finally {
+        setLoadingGrid(false);
+      }
     })();
   }, [leagueId]);
 
   if (loading || loadingGrid) return <div className="p-4">Loading...</div>;
+  if (loadError) return <div className="p-4 text-red-600 text-sm">{loadError}</div>;
 
-  const weeks = Array.from(new Set(allGames.filter((g) => g.week > 0).map((g) => g.week))).sort(
-    (a, b) => a - b
-  );
+  const weeks = Array.from(new Set(allGames.map((g) => g.week))).sort((a, b) => a - b);
 
   // Points-per-player-per-week, from whatever picks are actually visible to
   // this viewer (their own always; others' only once revealed — see the
@@ -1054,6 +1069,7 @@ export function CommissionerDashboard() {
   const [maxPlayersDraft, setMaxPlayersDraft] = useState<string>("");
   const [lockingAll, setLockingAll] = useState(false);
   const [lastLockResult, setLastLockResult] = useState<string | null>(null);
+  const [editingResultGameId, setEditingResultGameId] = useState<string | null>(null);
   const [tiebreakerQ, setTiebreakerQ] = useState("");
   const [tiebreakerAnswerDraft, setTiebreakerAnswerDraft] = useState("");
   const [tiebreakerRule, setTiebreakerRule] = useState<"closest" | "closest_without_going_over">(
@@ -1235,64 +1251,105 @@ export function CommissionerDashboard() {
         </div>
 
         <div className="space-y-3">
-          {games
-            .filter((g) => !g.result)
-            .map((g) => {
-              // Was purely `g.isLocked` — but nothing ever flips that field
-              // true just because kickoff passed (that's enforced in the
-              // security rules for picks, not reflected back onto the game
-              // doc). Without this real-time check, results couldn't be
-              // entered for a game that's already happened until someone
-              // separately went to Schedule Manager and manually locked it —
-              // a confusing dead end. Mirrors the same check PicksScreen
-              // already does correctly.
-              const isPastKickoff =
-                !g.timeTBD && !!g.gameTime && new Date(g.gameTime) <= now;
-              const canDeclare = g.isLocked || isPastKickoff;
+          {games.map((g) => {
+            // Was purely `g.isLocked` — but nothing ever flips that field
+            // true just because kickoff passed (that's enforced in the
+            // security rules for picks, not reflected back onto the game
+            // doc). Without this real-time check, results couldn't be
+            // entered for a game that's already happened until someone
+            // separately went to Schedule Manager and manually locked it —
+            // a confusing dead end. Mirrors the same check PicksScreen
+            // already does correctly.
+            const isPastKickoff = !g.timeTBD && !!g.gameTime && new Date(g.gameTime) <= now;
+            const canDeclare = g.isLocked || isPastKickoff;
+            const isEditing = editingResultGameId === g.id;
+
+            // A decided game that's NOT being edited shows compactly, with
+            // a Fix link — clicking a team here calls the exact same
+            // handleDeclareWinner as a fresh decision, which overwrites
+            // the previous result and correctly re-scores everyone from
+            // scratch (scoreGameImmediately always recomputes fresh, so
+            // fixing a fat-fingered pick is just re-declaring the actual
+            // winner, no separate "undo" mechanism needed).
+            if (g.result && !isEditing) {
               return (
-                <div key={g.id} className="border rounded bg-white p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-gray-500">
-                      {g.timeTBD || !g.gameTime
-                        ? "Time TBD"
-                        : formatKickoff(new Date(g.gameTime))}
-                    </span>
-                    {!canDeclare && (
+                <div
+                  key={g.id}
+                  className="flex items-center justify-between border rounded bg-gray-50 px-3 py-2"
+                >
+                  <span className="text-sm">
+                    <span className="font-semibold">{g.result.winner}</span>
+                    <span className="text-gray-500"> beat {g.result.loser}</span>
+                  </span>
+                  <button
+                    onClick={() => setEditingResultGameId(g.id)}
+                    className="text-xs font-semibold text-blue-600 hover:underline"
+                  >
+                    Wrong? Fix it
+                  </button>
+                </div>
+              );
+            }
+
+            return (
+              <div key={g.id} className="border rounded bg-white p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-gray-500">
+                    {g.timeTBD || !g.gameTime ? "Time TBD" : formatKickoff(new Date(g.gameTime))}
+                  </span>
+                  {g.result ? (
+                    <button
+                      onClick={() => setEditingResultGameId(null)}
+                      className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 hover:underline"
+                    >
+                      Cancel
+                    </button>
+                  ) : (
+                    !canDeclare && (
                       <span className="text-[10px] font-semibold uppercase tracking-wide bg-gray-100 text-gray-500 rounded-full px-2 py-0.5">
                         Still open — locks at kickoff
                       </span>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => canDeclare && handleDeclareWinner(g.id, g.awayTeam, g.homeTeam)}
-                      disabled={!canDeclare}
-                      className={`flex-1 py-2 px-3 rounded text-sm font-semibold ${
-                        canDeclare
-                          ? "bg-gray-100 hover:bg-green-100 hover:border-green-600 border-2 border-transparent cursor-pointer"
-                          : "bg-gray-50 text-gray-400 cursor-not-allowed"
-                      }`}
-                    >
-                      {g.awayTeam}
-                    </button>
-                    <button
-                      onClick={() => canDeclare && handleDeclareWinner(g.id, g.homeTeam, g.awayTeam)}
-                      disabled={!canDeclare}
-                      className={`flex-1 py-2 px-3 rounded text-sm font-semibold ${
-                        canDeclare
-                          ? "bg-gray-100 hover:bg-green-100 hover:border-green-600 border-2 border-transparent cursor-pointer"
-                          : "bg-gray-50 text-gray-400 cursor-not-allowed"
-                      }`}
-                    >
-                      {g.homeTeam}
-                    </button>
-                  </div>
+                    )
+                  )}
                 </div>
-              );
-            })}
-          {games.filter((g) => !g.result).length === 0 && (
-            <p className="text-sm text-gray-500">All games this week have results entered.</p>
-          )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      canDeclare && handleDeclareWinner(g.id, g.awayTeam, g.homeTeam);
+                      setEditingResultGameId(null);
+                    }}
+                    disabled={!canDeclare}
+                    className={`flex-1 py-2 px-3 rounded text-sm font-semibold ${
+                      g.result?.winner === g.awayTeam
+                        ? "bg-green-100 border-2 border-green-600"
+                        : canDeclare
+                        ? "bg-gray-100 hover:bg-green-100 hover:border-green-600 border-2 border-transparent cursor-pointer"
+                        : "bg-gray-50 text-gray-400 cursor-not-allowed"
+                    }`}
+                  >
+                    {g.awayTeam}
+                  </button>
+                  <button
+                    onClick={() => {
+                      canDeclare && handleDeclareWinner(g.id, g.homeTeam, g.awayTeam);
+                      setEditingResultGameId(null);
+                    }}
+                    disabled={!canDeclare}
+                    className={`flex-1 py-2 px-3 rounded text-sm font-semibold ${
+                      g.result?.winner === g.homeTeam
+                        ? "bg-green-100 border-2 border-green-600"
+                        : canDeclare
+                        ? "bg-gray-100 hover:bg-green-100 hover:border-green-600 border-2 border-transparent cursor-pointer"
+                        : "bg-gray-50 text-gray-400 cursor-not-allowed"
+                    }`}
+                  >
+                    {g.homeTeam}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {games.length === 0 && <p className="text-sm text-gray-500">No games this week yet.</p>}
         </div>
       </div>
 
