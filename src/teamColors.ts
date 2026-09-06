@@ -139,3 +139,23 @@ export const FALLBACK_COLOR: TeamColor = { bg: "#6b7280", fg: "#FFFFFF" };
 export function getTeamColor(abbr: string): TeamColor {
   return TEAM_COLORS[abbr] || COLLEGE_TEAM_COLORS[abbr] || FALLBACK_COLOR;
 }
+
+// ESPN's public logo CDN — a well-documented, commonly-referenced pattern
+// (https://a.espncdn.com/i/teamlogos/nfl/500/{code}.png). Only covers real
+// NFL teams (TEAM_FULL_NAMES keys) — Week 0's college test slate has no
+// logo source, so getTeamLogoUrl returns null for anything not a known NFL
+// code and callers should fall back to text in that case.
+//
+// ESPN's own codes mostly match this app's, with one confirmed exception:
+// Washington is "wsh" on ESPN, not "was". Only override what's actually
+// been checked, rather than guess at the rest.
+const ESPN_LOGO_CODE_OVERRIDES: Record<string, string> = {
+  WAS: "wsh",
+};
+
+export function getTeamLogoUrl(abbr: string): string | null {
+  if (!TEAM_FULL_NAMES[abbr]) return null; // not a known NFL code — e.g. a Week 0 college team
+  const code = ESPN_LOGO_CODE_OVERRIDES[abbr] || abbr.toLowerCase();
+  return `https://a.espncdn.com/i/teamlogos/nfl/500/${code}.png`;
+}
+

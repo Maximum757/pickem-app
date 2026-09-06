@@ -5,7 +5,7 @@
 import React, { useState } from "react";
 import { useLeague } from "./LeagueContext";
 import { useAuth } from "./AuthContext";
-import { getTeamColor, getTeamDisplayName } from "./teamColors";
+import { getTeamColor, getTeamDisplayName, getTeamLogoUrl } from "./teamColors";
 import * as firebaseUtils from "./firebase-utils";
 import * as schema from "./firestore-schema";
 
@@ -40,6 +40,7 @@ function PickTile({
   isClickable,
   borderClass,
   subtext,
+  showLogo,
   onClick,
 }: {
   abbr: string;
@@ -48,6 +49,7 @@ function PickTile({
   isClickable: boolean;
   borderClass: string;
   subtext: string;
+  showLogo: boolean;
   onClick: () => void;
 }) {
   const colors = getTeamColor(abbr);
@@ -56,6 +58,8 @@ function PickTile({
   // colors existed, so the picked one stays the only thing drawing the eye.
   const bg = showColor ? colors.bg : "#e5e7eb";
   const fg = showColor ? colors.fg : "#6b7280";
+  const logoUrl = showLogo ? getTeamLogoUrl(abbr) : null; // null for Week 0's college teams either way
+  const [logoFailed, setLogoFailed] = useState(false);
   return (
     <div
       onClick={isClickable ? onClick : undefined}
@@ -64,8 +68,23 @@ function PickTile({
       }`}
       style={{ background: bg, color: fg, border: "5px solid transparent" }}
     >
-      <div className="font-bold">{getTeamDisplayName(abbr)}</div>
-      <div className="text-xs font-medium opacity-90 mt-0.5">{subtext}</div>
+      {logoUrl && !logoFailed ? (
+        <div className="flex flex-col items-center gap-1">
+          <img
+            src={logoUrl}
+            alt={getTeamDisplayName(abbr)}
+            className="w-16 h-16 object-contain"
+            style={{ filter: showColor ? "none" : "grayscale(1) opacity(0.6)" }}
+            onError={() => setLogoFailed(true)}
+          />
+          <div className="text-xs font-medium opacity-90">{subtext}</div>
+        </div>
+      ) : (
+        <>
+          <div className="font-bold">{getTeamDisplayName(abbr)}</div>
+          <div className="text-xs font-medium opacity-90 mt-0.5">{subtext}</div>
+        </>
+      )}
     </div>
   );
 }
@@ -183,6 +202,18 @@ export function PicksScreen() {
     setMyWeekLocked,
   } = useLeague();
   const [tbDraft, setTbDraft] = useState<string>(myTiebreakerGuess?.toString() ?? "");
+  // Per-device preference, not per-account — a shared family tablet stays
+  // in logo mode across whoever's signed in, which is the actual use case
+  // (a parent picks once, a kid uses the same device later).
+  const [showLogos, setShowLogos] = useState<boolean>(
+    () => localStorage.getItem("pickem-show-logos") === "true"
+  );
+  const toggleLogos = () => {
+    setShowLogos((prev) => {
+      localStorage.setItem("pickem-show-logos", String(!prev));
+      return !prev;
+    });
+  };
   const [tbSaved, setTbSaved] = useState(false);
 
   const handlePick = (gameId: string, team: string) => {
@@ -215,6 +246,21 @@ export function PicksScreen() {
   return (
     <div className="p-4">
       <WeekSelector currentWeek={currentWeek} officialWeek={league?.currentWeek} onChange={setCurrentWeek} />
+      <div className="flex items-center gap-2 mb-3">
+        <button
+          onClick={toggleLogos}
+          className={`text-xs font-bold px-3 py-1.5 rounded-full ${
+            showLogos ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-600"
+          }`}
+        >
+          {showLogos ? "🏈 Logos on" : "Show team logos"}
+        </button>
+        {showLogos && (
+          <span className="text-xs text-gray-500">
+            Tap a team's picture to pick — handy for younger players who can't read the names yet.
+          </span>
+        )}
+      </div>
       {isCommissioner && (
         <div className="mb-3 flex items-center gap-2">
           <button
@@ -363,6 +409,7 @@ export function PicksScreen() {
                   isClickable={isClickable}
                   borderClass={borderClassFor(game.awayTeam)}
                   subtext={subtextFor(game.awayTeam)}
+                  showLogo={showLogos}
                   onClick={() => handlePick(game.id, game.awayTeam)}
                 />
                 <StatusCircle game={game} picked={picked} />
@@ -373,6 +420,7 @@ export function PicksScreen() {
                   isClickable={isClickable}
                   borderClass={borderClassFor(game.homeTeam)}
                   subtext={subtextFor(game.homeTeam)}
+                  showLogo={showLogos}
                   onClick={() => handlePick(game.id, game.homeTeam)}
                 />
               </div>
@@ -527,38 +575,271 @@ export function MySummaryScreen() {
   );
 }
 
-export function StandingsScreen() {
-  const { standings, loading } = useLeague();
+// ============================================================================
+// PAYOUTS - Dues and prize structure. Visible to everyone; only the
+// commissioner can edit. Playoff-portion payouts are a deliberately
+// separate, not-yet-built feature (see product notes) — this only covers
+// the regular-season dues/weekly/season structure.
+// ============================================================================
 
-  if (loading) return <div className="p-4">Loading...</div>;
+export function PayoutsScreen() {
+  const { league, players, isCommissioner, setLeaguePayoutSettings } = useLeague();
+  const [editing, setEditing] = useState(false);
+  const [entryFeeDraft, setEntryFeeDraft] = useState("");
+  const [weeklyDraft, setWeeklyDraft] = useState("");
+  const [seasonDrafts, setSeasonDrafts] = useState<string[]>(["", "", "", "", ""]);
+
+  const activeCount = players.filter((p) => !p.removedFromLeague).length;
+  const entryFee = league?.entryFee ?? null;
+  const weeklyPayout = league?.weeklyPayout ?? null;
+  const seasonPayouts = league?.seasonPayouts ?? [null, null, null, null, null];
+
+  const totalPot = entryFee !== null ? entryFee * activeCount : null;
+  const totalWeeklyCommitment = weeklyPayout !== null ? weeklyPayout * 18 : 0;
+  const totalSeasonCommitment = seasonPayouts.reduce((sum: number, p) => sum + (p || 0), 0);
+  const totalCommitted = totalWeeklyCommitment + totalSeasonCommitment;
+
+  const startEditing = () => {
+    setEntryFeeDraft(entryFee !== null ? String(entryFee) : "");
+    setWeeklyDraft(weeklyPayout !== null ? String(weeklyPayout) : "");
+    setSeasonDrafts(seasonPayouts.map((p) => (p !== null ? String(p) : "")));
+    setEditing(true);
+  };
+
+  const save = () => {
+    setLeaguePayoutSettings({
+      entryFee: entryFeeDraft ? parseFloat(entryFeeDraft) : null,
+      weeklyPayout: weeklyDraft ? parseFloat(weeklyDraft) : null,
+      seasonPayouts: seasonDrafts.map((d) => (d ? parseFloat(d) : null)),
+    });
+    setEditing(false);
+  };
+
+  const placeLabels = ["1st", "2nd", "3rd", "4th", "5th"];
+
+  return (
+    <div className="p-4 max-w-xl">
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-2xl font-bold">Payouts</h2>
+        {isCommissioner && !editing && (
+          <button
+            onClick={startEditing}
+            className="text-xs font-semibold text-blue-600 hover:underline"
+          >
+            Edit
+          </button>
+        )}
+      </div>
+      <p className="text-sm text-gray-600 mb-4">
+        Dues, weekly prize, and season-long payouts. Playoff buy-in and payouts
+        aren't set up yet — coming later.
+      </p>
+
+      {editing ? (
+        <div className="space-y-4 border rounded p-4 bg-gray-50">
+          <div>
+            <label className="block text-sm font-medium mb-1">Entry fee (per player)</label>
+            <input
+              type="number"
+              value={entryFeeDraft}
+              onChange={(e) => setEntryFeeDraft(e.target.value)}
+              placeholder="e.g. 100"
+              className="w-32 border p-2 rounded text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Weekly payout (to that week's leader)</label>
+            <input
+              type="number"
+              value={weeklyDraft}
+              onChange={(e) => setWeeklyDraft(e.target.value)}
+              placeholder="e.g. 100"
+              className="w-32 border p-2 rounded text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2">Season-long payouts</label>
+            <div className="space-y-2">
+              {placeLabels.map((label, i) => (
+                <div key={label} className="flex items-center gap-2">
+                  <span className="text-sm text-gray-600 w-10">{label}</span>
+                  <input
+                    type="number"
+                    value={seasonDrafts[i]}
+                    onChange={(e) => {
+                      const next = [...seasonDrafts];
+                      next[i] = e.target.value;
+                      setSeasonDrafts(next);
+                    }}
+                    placeholder="0"
+                    className="w-32 border p-2 rounded text-sm"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={save}
+              className="bg-blue-500 hover:bg-blue-600 text-white font-semibold px-4 py-2 rounded text-sm"
+            >
+              Save
+            </button>
+            <button
+              onClick={() => setEditing(false)}
+              className="text-sm text-gray-500 px-2"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="border rounded p-4 bg-white">
+            <div className="text-xs uppercase tracking-wide text-gray-500 font-semibold mb-2">
+              Dues
+            </div>
+            {entryFee !== null ? (
+              <div className="text-sm">
+                ${entryFee} × {activeCount} players ={" "}
+                <span className="font-bold">${totalPot} total pot</span>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">Not set yet.</p>
+            )}
+          </div>
+
+          <div className="border rounded p-4 bg-white">
+            <div className="text-xs uppercase tracking-wide text-gray-500 font-semibold mb-2">
+              Weekly Payout
+            </div>
+            {weeklyPayout !== null ? (
+              <div className="text-sm">
+                ${weeklyPayout} to that week's points leader, every week
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">Not set yet.</p>
+            )}
+          </div>
+
+          <div className="border rounded p-4 bg-white">
+            <div className="text-xs uppercase tracking-wide text-gray-500 font-semibold mb-2">
+              Season-Long Payouts
+            </div>
+            <div className="space-y-1">
+              {placeLabels.map((label, i) => (
+                <div key={label} className="flex justify-between text-sm">
+                  <span className="text-gray-600">{label}</span>
+                  <span className="font-semibold">${seasonPayouts[i] || 0}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {totalPot !== null && (
+            <div
+              className={`border rounded p-4 text-sm ${
+                totalCommitted > totalPot ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200"
+              }`}
+            >
+              <div className="flex justify-between font-semibold">
+                <span>Total committed (weekly × 18 + season)</span>
+                <span>${totalCommitted}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Total pot collected</span>
+                <span>${totalPot}</span>
+              </div>
+              {totalCommitted > totalPot && (
+                <p className="text-red-700 font-semibold mt-1">
+                  Committed payouts exceed the current pot — either more players
+                  need to join/pay, or the amounts need adjusting.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function StandingsScreen() {
+  const { leagueId, standings, loading } = useLeague();
+  const [allGames, setAllGames] = useState<schema.GameDoc[]>([]);
+  const [allPicks, setAllPicks] = useState<schema.PickDoc[]>([]);
+  const [loadingGrid, setLoadingGrid] = useState(true);
+
+  React.useEffect(() => {
+    if (!leagueId) return;
+    setLoadingGrid(true);
+    (async () => {
+      const [gamesData, picksData] = await Promise.all([
+        firebaseUtils.getAllGamesForLeague(leagueId),
+        firebaseUtils.getAllPicksForLeague(leagueId),
+      ]);
+      setAllGames(gamesData);
+      setAllPicks(picksData);
+      setLoadingGrid(false);
+    })();
+  }, [leagueId]);
+
+  if (loading || loadingGrid) return <div className="p-4">Loading...</div>;
+
+  const weeks = Array.from(new Set(allGames.filter((g) => g.week > 0).map((g) => g.week))).sort(
+    (a, b) => a - b
+  );
+
+  // Points-per-player-per-week, from whatever picks are actually visible to
+  // this viewer (their own always; others' only once revealed — see the
+  // picks read rule). A week that's fully hidden from a regular player just
+  // shows blank for everyone but themselves and the commissioner, same
+  // reveal timing as everywhere else in the app.
+  const pointsByPlayerWeek = new Map<string, Map<number, number>>();
+  allPicks.forEach((p) => {
+    if (p.pointsAwarded === undefined) return;
+    if (!pointsByPlayerWeek.has(p.playerId)) pointsByPlayerWeek.set(p.playerId, new Map());
+    const weekMap = pointsByPlayerWeek.get(p.playerId)!;
+    weekMap.set(p.week, (weekMap.get(p.week) || 0) + p.pointsAwarded);
+  });
 
   return (
     <div className="p-4">
       <h2 className="text-2xl font-bold mb-4">Standings</h2>
 
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-100 border-b">
-            <tr>
-              <th className="text-left py-2 px-2">Rank</th>
-              <th className="text-left py-2 px-2">Player</th>
-              <th className="text-right py-2 px-2">Points</th>
-              <th className="text-right py-2 px-2">Correct</th>
-              <th className="text-right py-2 px-2">High</th>
-              <th className="text-right py-2 px-2">2nd High</th>
+        <table className="border-collapse text-sm">
+          <thead>
+            <tr className="border-b-2">
+              <th className="text-left py-2 pr-3 sticky left-0 bg-white">Rank</th>
+              <th className="text-left py-2 pr-4 sticky left-8 bg-white">Player</th>
+              {weeks.map((w) => (
+                <th key={w} className="text-right py-2 px-2 font-semibold text-gray-600 whitespace-nowrap">
+                  Wk {w}
+                </th>
+              ))}
+              <th className="text-right py-2 pl-4 font-bold border-l-2">Total</th>
             </tr>
           </thead>
           <tbody>
-            {standings.map((s) => (
-              <tr key={s.playerId} className="border-b hover:bg-gray-50">
-                <td className="py-2 px-2 font-bold">{s.rank}</td>
-                <td className="py-2 px-2">{s.playerName}</td>
-                <td className="py-2 px-2 text-right font-semibold">{s.totalPoints}</td>
-                <td className="py-2 px-2 text-right">{s.totalCorrect}</td>
-                <td className="py-2 px-2 text-right">{s.highestWeek || "—"}</td>
-                <td className="py-2 px-2 text-right">{s.secondHighestWeek || "—"}</td>
-              </tr>
-            ))}
+            {standings.map((s) => {
+              const weekMap = pointsByPlayerWeek.get(s.playerId);
+              return (
+                <tr key={s.playerId} className="border-b hover:bg-gray-50">
+                  <td className="py-2 pr-3 font-bold sticky left-0 bg-white">{s.rank}</td>
+                  <td className="py-2 pr-4 sticky left-8 bg-white">{s.playerName}</td>
+                  {weeks.map((w) => {
+                    const pts = weekMap?.get(w);
+                    return (
+                      <td key={w} className="text-right py-2 px-2 text-gray-700">
+                        {pts !== undefined ? pts : "—"}
+                      </td>
+                    );
+                  })}
+                  <td className="text-right py-2 pl-4 font-bold border-l-2">{s.totalPoints}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1384,19 +1665,31 @@ export function WeeklySummary() {
 // MAIN APP COMPONENT
 // ============================================================================
 
-type ViewType = "picks" | "mysummary" | "standings" | "commissioner" | "summary" | "members";
+type ViewType = "picks" | "mysummary" | "standings" | "payouts" | "commissioner" | "summary" | "members";
 
 // ============================================================================
 // MEMBERS SCREEN - Roster with contact info and dues tracking (commissioner only)
 // ============================================================================
 
 export function MembersScreen() {
-  const { players, setPlayerPaid, removePlayer, restorePlayer } = useLeague();
+  const { players, setPlayerPaid, removePlayer, restorePlayer, updatePlayerPhone } = useLeague();
   const [confirmingRemove, setConfirmingRemove] = useState<string | null>(null);
+  const [confirmingUnpay, setConfirmingUnpay] = useState<string | null>(null);
+  const [editingPhone, setEditingPhone] = useState<string | null>(null);
+  const [phoneDraft, setPhoneDraft] = useState("");
 
   const activePlayers = players.filter((p) => !p.removedFromLeague);
   const removedPlayers = players.filter((p) => p.removedFromLeague);
   const paidCount = activePlayers.filter((p) => p.hasPaid).length;
+
+  const startEditingPhone = (p: schema.PlayerDoc) => {
+    setPhoneDraft(p.phone || "");
+    setEditingPhone(p.id);
+  };
+  const savePhone = (playerId: string) => {
+    updatePlayerPhone(playerId, phoneDraft.trim());
+    setEditingPhone(null);
+  };
 
   return (
     <div className="p-4 max-w-2xl">
@@ -1407,7 +1700,7 @@ export function MembersScreen() {
         </span>
       </div>
       <p className="text-sm text-gray-600 mb-4">
-        Names and emails for everyone in the league, and who's paid their dues.
+        Names, emails, and phone numbers for everyone in the league, and who's paid their dues.
       </p>
 
       <div className="space-y-2">
@@ -1419,31 +1712,55 @@ export function MembersScreen() {
             <div>
               <div className="text-sm font-semibold">{p.name}</div>
               <div className="text-xs text-gray-500">{p.email}</div>
+              {editingPhone === p.id ? (
+                <div className="flex items-center gap-1 mt-1">
+                  <input
+                    type="tel"
+                    value={phoneDraft}
+                    onChange={(e) => setPhoneDraft(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && savePhone(p.id)}
+                    placeholder="(555) 555-5555"
+                    autoFocus
+                    className="text-xs border rounded px-2 py-1 w-32"
+                  />
+                  <button
+                    onClick={() => savePhone(p.id)}
+                    className="text-xs font-semibold text-green-600"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setEditingPhone(null)}
+                    className="text-xs text-gray-400"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => startEditingPhone(p)}
+                  className="text-xs text-gray-500 hover:underline mt-0.5"
+                >
+                  {p.phone || <span className="text-gray-400 italic">Add phone number</span>}
+                  {p.phone && <span className="text-gray-400"> ✎</span>}
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPlayerPaid(p.id, !p.hasPaid)}
-                className={`text-xs font-bold px-3 py-1.5 rounded-full ${
-                  p.hasPaid
-                    ? "bg-green-100 text-green-700"
-                    : "bg-red-100 text-red-700"
-                }`}
-              >
-                {p.hasPaid ? "✓ Paid" : "Not paid"}
-              </button>
-              {confirmingRemove === p.id ? (
+              {p.hasPaid && confirmingUnpay === p.id ? (
                 <div className="flex items-center gap-1">
+                  <span className="text-xs text-gray-500">Mark unpaid?</span>
                   <button
                     onClick={() => {
-                      removePlayer(p.id);
-                      setConfirmingRemove(null);
+                      setPlayerPaid(p.id, false);
+                      setConfirmingUnpay(null);
                     }}
                     className="text-xs font-bold px-2 py-1.5 rounded bg-red-600 text-white"
                   >
                     Confirm
                   </button>
                   <button
-                    onClick={() => setConfirmingRemove(null)}
+                    onClick={() => setConfirmingUnpay(null)}
                     className="text-xs text-gray-500 px-1"
                   >
                     Cancel
@@ -1451,13 +1768,48 @@ export function MembersScreen() {
                 </div>
               ) : (
                 <button
-                  onClick={() => setConfirmingRemove(p.id)}
-                  className="text-xs text-gray-400 hover:text-red-600"
-                  title="Remove from league"
+                  onClick={() => (p.hasPaid ? setConfirmingUnpay(p.id) : setPlayerPaid(p.id, true))}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-full ${
+                    p.hasPaid
+                      ? "bg-green-100 text-green-700"
+                      : "bg-red-100 text-red-700"
+                  }`}
                 >
-                  Remove
+                  {p.hasPaid ? "✓ Paid" : "Not paid"}
                 </button>
               )}
+              {/* Remove is only offered for someone who hasn't paid — booting
+                  a paid member risks losing track of money already collected;
+                  if that's genuinely needed, mark them unpaid first (its own
+                  confirm step) so it's a deliberate two-step action. */}
+              {!p.hasPaid &&
+                (confirmingRemove === p.id ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => {
+                        removePlayer(p.id);
+                        setConfirmingRemove(null);
+                      }}
+                      className="text-xs font-bold px-2 py-1.5 rounded bg-red-600 text-white"
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      onClick={() => setConfirmingRemove(null)}
+                      className="text-xs text-gray-500 px-1"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmingRemove(p.id)}
+                    className="text-xs text-gray-400 hover:text-red-600"
+                    title="Remove from league"
+                  >
+                    Remove
+                  </button>
+                ))}
             </div>
           </div>
         ))}
@@ -1621,6 +1973,16 @@ export function App() {
             >
               Standings
             </button>
+            <button
+              onClick={() => setView("payouts")}
+              className={`py-2 px-4 rounded font-medium transition ${
+                view === "payouts"
+                  ? "bg-blue-500 text-white"
+                  : "bg-gray-200 hover:bg-gray-300"
+              }`}
+            >
+              Payouts
+            </button>
             {isCommissioner && (
               <button
                 onClick={() => setView("commissioner")}
@@ -1664,6 +2026,7 @@ export function App() {
         {!loading && view === "picks" && <PicksScreen />}
         {!loading && view === "mysummary" && <MySummaryScreen />}
         {!loading && view === "standings" && <StandingsScreen />}
+        {!loading && view === "payouts" && <PayoutsScreen />}
         {!loading && view === "commissioner" && isCommissioner && <CommissionerDashboard />}
         {!loading && view === "summary" && <WeeklySummary />}
         {!loading && view === "members" && isCommissioner && <MembersScreen />}

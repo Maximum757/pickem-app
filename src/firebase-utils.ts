@@ -119,6 +119,20 @@ export async function getAllGamesForLeague(leagueId: string): Promise<schema.Gam
 }
 
 /**
+ * Every pick the security rules will show the CALLING user, across every
+ * week — no week filter. For the commissioner this is genuinely
+ * everything; for a regular player it's their own picks plus whatever the
+ * "own picks + locked commissioner week + any locked game" rule already
+ * allows (same rule Weekly Summary depends on, just not scoped to one
+ * week). Used to build the league-wide Standings grid.
+ */
+export async function getAllPicksForLeague(leagueId: string): Promise<schema.PickDoc[]> {
+  const q = query(collection(db, `leagues/${leagueId}/picks`));
+  const querySnapshot = await getDocs(q);
+  return querySnapshot.docs.map((doc) => doc.data() as schema.PickDoc);
+}
+
+/**
  * Get all picks for a game
  */
 export async function getGamePicks(
@@ -835,6 +849,25 @@ export async function setLeagueMaxPlayers(leagueId: string, maxPlayers: number |
 }
 
 /**
+ * Commissioner sets the dues/payout structure. All amounts are entered
+ * directly rather than computed from player count — deliberately flexible
+ * so the commissioner can adjust as roster size firms up, rather than the
+ * app guessing a scaling formula. seasonPayouts is always exactly 5 entries
+ * (1st-5th); any entry can be 0/null if the league doesn't pay that deep.
+ */
+export async function setLeaguePayoutSettings(
+  leagueId: string,
+  settings: {
+    entryFee: number | null;
+    weeklyPayout: number | null;
+    seasonPayouts: (number | null)[];
+  }
+): Promise<void> {
+  const leagueRef = doc(db, "leagues", leagueId);
+  await updateDoc(leagueRef, settings);
+}
+
+/**
  * Update a player's own display name. Security rules already permit this
  * (isSelf(playerId) on the players collection's update rule) — this is the
  * first place in the app that actually calls it.
@@ -842,6 +875,16 @@ export async function setLeagueMaxPlayers(leagueId: string, maxPlayers: number |
 export async function updatePlayerName(leagueId: string, playerId: string, name: string): Promise<void> {
   const playerRef = doc(db, `leagues/${leagueId}/players`, playerId);
   await updateDoc(playerRef, { name });
+}
+
+/**
+ * Commissioner records (or edits) a player's phone number — already
+ * covered by the existing players-collection update rule (isSelf OR
+ * isCommissioner), no rules change needed.
+ */
+export async function updatePlayerPhone(leagueId: string, playerId: string, phone: string): Promise<void> {
+  const playerRef = doc(db, `leagues/${leagueId}/players`, playerId);
+  await updateDoc(playerRef, { phone });
 }
 
 /**

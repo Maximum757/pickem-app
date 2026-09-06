@@ -32,6 +32,15 @@ export interface LeagueDoc {
                                // means no cap. Enforced client-side at signup
                                // (see AuthContext.signUp) — not a hard server-side
                                // guarantee; see the note in that function.
+  entryFee?: number | null; // Dues per player — informational, paired with
+                             // each player's own hasPaid flag for tracking.
+  weeklyPayout?: number | null; // $ awarded to that week's points leader.
+  seasonPayouts?: (number | null)[]; // 1st through 5th place, in order —
+                                      // commissioner-editable, any entry can
+                                      // be 0 if the league doesn't pay that
+                                      // deep. Playoff-portion payouts are a
+                                      // deliberately separate, not-yet-built
+                                      // feature — see product notes.
   currentWeek: number; // The week players/commissioner see by default on open.
                         // Advanced explicitly by the commissioner (setLeagueCurrentWeek) —
                         // not inferred from wall-clock time, since bye weeks and a
@@ -58,6 +67,12 @@ export interface PlayerDoc {
                                 // in firebase-utils.ts. Never hard-delete the doc:
                                 // AuthGate's self-heal recreates a missing player doc
                                 // on next login, which would silently un-boot them.
+  phone?: string; // Commissioner-entered, for reaching someone about a missed
+                   // pick — same privacy caveat as email on this same doc (see
+                   // the players collection comment in firestore.rules): not
+                   // field-level restricted, technically readable by anyone
+                   // signed in, though only ever surfaced in the UI on the
+                   // commissioner-only Members tab.
 }
 
 /**
@@ -386,6 +401,9 @@ export interface UILeague {
   season: number;
   playerCount: number;
   maxPlayers?: number | null;
+  entryFee?: number | null;
+  weeklyPayout?: number | null;
+  seasonPayouts?: (number | null)[];
   commissionerId: string;
   currentWeek: number;
 }

@@ -31,11 +31,17 @@ interface LeagueContextType {
   setCurrentWeek: (week: number) => void;
   advanceToWeek: (week: number) => Promise<void>;
   updateMyName: (name: string) => Promise<void>;
+  updatePlayerPhone: (playerId: string, phone: string) => Promise<void>;
   assignMissedPick: (gameId: string, playerId: string, pickedTeam: string) => Promise<void>;
   setPlayerPaid: (playerId: string, hasPaid: boolean) => Promise<void>;
   removePlayer: (playerId: string) => Promise<void>;
   restorePlayer: (playerId: string) => Promise<void>;
   setLeagueMaxPlayers: (maxPlayers: number | null) => Promise<void>;
+  setLeaguePayoutSettings: (settings: {
+    entryFee: number | null;
+    weeklyPayout: number | null;
+    seasonPayouts: (number | null)[];
+  }) => Promise<void>;
   myWeekLocked: boolean;
   setMyWeekLocked: (locked: boolean) => Promise<void>;
   submitPicks: (picks: Array<{ gameId: string; pickedTeam: string }>) => Promise<void>;
@@ -213,6 +219,9 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
             season: leagueData.season,
             playerCount: leagueData.playerCount,
             maxPlayers: leagueData.maxPlayers ?? null,
+            entryFee: leagueData.entryFee ?? null,
+            weeklyPayout: leagueData.weeklyPayout ?? null,
+            seasonPayouts: leagueData.seasonPayouts ?? [null, null, null, null, null],
             commissionerId: leagueData.commissionerId,
             currentWeek: leagueData.currentWeek,
           });
@@ -492,6 +501,18 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const handleUpdatePlayerPhone = async (targetPlayerId: string, phone: string) => {
+    if (!leagueId) return;
+    try {
+      await firebaseUtils.updatePlayerPhone(leagueId, targetPlayerId, phone);
+      setPlayers((prev) =>
+        prev.map((p) => (p.id === targetPlayerId ? { ...p, phone } : p))
+      );
+    } catch (err) {
+      setError(`Failed to update phone: ${err}`);
+    }
+  };
+
   const handleAssignMissedPick = async (gameId: string, forPlayerId: string, pickedTeam: string) => {
     if (!leagueId) return;
     try {
@@ -553,6 +574,20 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
       setLeague((prev) => (prev ? { ...prev, maxPlayers } : prev));
     } catch (err) {
       setError(`Failed to update player cap: ${err}`);
+    }
+  };
+
+  const handleSetLeaguePayoutSettings = async (settings: {
+    entryFee: number | null;
+    weeklyPayout: number | null;
+    seasonPayouts: (number | null)[];
+  }) => {
+    if (!leagueId) return;
+    try {
+      await firebaseUtils.setLeaguePayoutSettings(leagueId, settings);
+      setLeague((prev) => (prev ? { ...prev, ...settings } : prev));
+    } catch (err) {
+      setError(`Failed to update payout settings: ${err}`);
     }
   };
 
@@ -632,11 +667,13 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         setCurrentWeek,
         advanceToWeek: handleAdvanceToWeek,
         updateMyName: handleUpdateMyName,
+        updatePlayerPhone: handleUpdatePlayerPhone,
         assignMissedPick: handleAssignMissedPick,
         setPlayerPaid: handleSetPlayerPaid,
         removePlayer: handleRemovePlayer,
         restorePlayer: handleRestorePlayer,
         setLeagueMaxPlayers: handleSetLeagueMaxPlayers,
+        setLeaguePayoutSettings: handleSetLeaguePayoutSettings,
         myWeekLocked,
         setMyWeekLocked: handleSetMyWeekLocked,
         submitPicks: handleSubmitPicks,
