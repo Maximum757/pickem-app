@@ -798,7 +798,7 @@ export function PayoutsScreen() {
 }
 
 export function StandingsScreen() {
-  const { leagueId, standings, loading } = useLeague();
+  const { leagueId, standings, league, loading } = useLeague();
   const [allGames, setAllGames] = useState<schema.GameDoc[]>([]);
   const [allPicks, setAllPicks] = useState<schema.PickDoc[]>([]);
   const [loadingGrid, setLoadingGrid] = useState(true);
@@ -838,22 +838,78 @@ export function StandingsScreen() {
 
   const weeks = Array.from(new Set(allGames.map((g) => g.week))).sort((a, b) => a - b);
 
-  // Points-per-player-per-week, from whatever picks are actually visible to
-  // this viewer (their own always; others' only once revealed — see the
-  // picks read rule). A week that's fully hidden from a regular player just
-  // shows blank for everyone but themselves and the commissioner, same
-  // reveal timing as everywhere else in the app.
+  // Points AND correct-picks-count per player per week, from whatever picks
+  // are actually visible to this viewer (their own always; others' only
+  // once revealed — see the picks read rule). A week that's fully hidden
+  // from a regular player just shows blank for everyone but themselves and
+  // the commissioner, same reveal timing as everywhere else in the app.
   const pointsByPlayerWeek = new Map<string, Map<number, number>>();
+  const correctByPlayerWeek = new Map<string, Map<number, number>>();
   allPicks.forEach((p) => {
     if (p.pointsAwarded === undefined) return;
     if (!pointsByPlayerWeek.has(p.playerId)) pointsByPlayerWeek.set(p.playerId, new Map());
     const weekMap = pointsByPlayerWeek.get(p.playerId)!;
     weekMap.set(p.week, (weekMap.get(p.week) || 0) + p.pointsAwarded);
+
+    if (p.isCorrect) {
+      if (!correctByPlayerWeek.has(p.playerId)) correctByPlayerWeek.set(p.playerId, new Map());
+      const correctMap = correctByPlayerWeek.get(p.playerId)!;
+      correctMap.set(p.week, (correctMap.get(p.week) || 0) + 1);
+    }
   });
+
+  // Weekly winnings: for each week, whoever had the most points that week
+  // splits that week's payout evenly (a genuine tie is realistic in a
+  // contrarian pool). Only weeks with actual points on the board count —
+  // a week where everyone's still at 0 isn't "won" by anybody yet.
+  const weeklyWinningsByPlayer = new Map<string, number>();
+  if (league?.weeklyPayout) {
+    weeks.forEach((w) => {
+      let maxPts = 0;
+      let leaders: string[] = [];
+      pointsByPlayerWeek.forEach((weekMap, playerId) => {
+        const pts = weekMap.get(w);
+        if (pts === undefined) return;
+        if (pts > maxPts) {
+          maxPts = pts;
+          leaders = [playerId];
+        } else if (pts === maxPts && pts > 0) {
+          leaders.push(playerId);
+        }
+      });
+      if (maxPts > 0 && leaders.length > 0) {
+        const share = league.weeklyPayout! / leaders.length;
+        leaders.forEach((playerId) => {
+          weeklyWinningsByPlayer.set(playerId, (weeklyWinningsByPlayer.get(playerId) || 0) + share);
+        });
+      }
+    });
+  }
+
+  // Season winnings: based on CURRENT rank, not a final result — this
+  // shifts as the season plays out, same as the standings themselves.
+  const seasonWinningsByPlayer = new Map<string, number>();
+  if (league?.seasonPayouts) {
+    standings.forEach((s) => {
+      if (s.rank >= 1 && s.rank <= 5) {
+        const amount = league.seasonPayouts![s.rank - 1];
+        if (amount) seasonWinningsByPlayer.set(s.playerId, amount);
+      }
+    });
+  }
+
+  const totalWinnings = (playerId: string) =>
+    (weeklyWinningsByPlayer.get(playerId) || 0) + (seasonWinningsByPlayer.get(playerId) || 0);
 
   return (
     <div className="p-4">
-      <h2 className="text-2xl font-bold mb-4">Standings</h2>
+      <h2 className="text-2xl font-bold mb-1">Standings</h2>
+      {league?.seasonPayouts && (
+        <p className="text-xs text-gray-500 mb-4">
+          Winnings shown are current, not final — season payout reflects today's rank, which will
+          keep shifting.
+        </p>
+      )}
 
       <div className="overflow-x-auto">
         <table className="border-collapse text-sm">
@@ -861,31 +917,51 @@ export function StandingsScreen() {
             <tr className="border-b-2">
               <th className="text-left py-2 pr-3 sticky left-0 bg-white">Rank</th>
               <th className="text-left py-2 pr-4 sticky left-8 bg-white">Player</th>
+              <th className="text-right py-2 px-3 font-bold border-l-2 border-r-2">Total</th>
               {weeks.map((w) => (
                 <th key={w} className="text-right py-2 px-2 font-semibold text-gray-600 whitespace-nowrap">
                   Wk {w}
                 </th>
               ))}
-              <th className="text-right py-2 pl-4 font-bold border-l-2">Total</th>
             </tr>
           </thead>
           <tbody>
             {standings.map((s) => {
               const weekMap = pointsByPlayerWeek.get(s.playerId);
+              const correctMap = correctByPlayerWeek.get(s.playerId);
+              const winnings = totalWinnings(s.playerId);
               return (
-                <tr key={s.playerId} className="border-b hover:bg-gray-50">
-                  <td className="py-2 pr-3 font-bold sticky left-0 bg-white">{s.rank}</td>
-                  <td className="py-2 pr-4 sticky left-8 bg-white">{s.playerName}</td>
-                  {weeks.map((w) => {
-                    const pts = weekMap?.get(w);
-                    return (
-                      <td key={w} className="text-right py-2 px-2 text-gray-700">
-                        {pts !== undefined ? pts : "—"}
+                <React.Fragment key={s.playerId}>
+                  <tr className="bg-green-50">
+                    <td rowSpan={2} className="py-2 pr-3 font-bold text-lg sticky left-0 bg-green-50 align-top">
+                      {s.rank}
+                    </td>
+                    <td className="pt-2 pr-4 font-bold text-base sticky left-8 bg-green-50">
+                      {s.playerName}
+                    </td>
+                    <td className="text-right pt-2 px-3 font-bold text-lg border-l-2 border-r-2">
+                      {s.totalPoints}
+                    </td>
+                    {weeks.map((w) => (
+                      <td key={w} className="text-right pt-2 px-2 font-semibold">
+                        {weekMap?.get(w) !== undefined ? weekMap.get(w) : "—"}
                       </td>
-                    );
-                  })}
-                  <td className="text-right py-2 pl-4 font-bold border-l-2">{s.totalPoints}</td>
-                </tr>
+                    ))}
+                  </tr>
+                  <tr className="bg-green-50 border-b-2 border-gray-200">
+                    <td className="pb-2 pr-4 text-xs text-gray-500 sticky left-8 bg-green-50">
+                      {winnings > 0 ? `$${winnings.toLocaleString()} won` : ""}
+                    </td>
+                    <td className="text-right pb-2 px-3 text-xs text-gray-500 border-l-2 border-r-2">
+                      {s.totalCorrect} correct
+                    </td>
+                    {weeks.map((w) => (
+                      <td key={w} className="text-right pb-2 px-2 text-xs text-gray-400">
+                        {correctMap?.get(w) !== undefined ? correctMap.get(w) : ""}
+                      </td>
+                    ))}
+                  </tr>
+                </React.Fragment>
               );
             })}
           </tbody>
