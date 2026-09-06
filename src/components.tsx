@@ -798,14 +798,14 @@ export function PayoutsScreen() {
 }
 
 export function StandingsScreen() {
-  const { leagueId, standings, league, loading } = useLeague();
+  const { leagueId, playerId, standings, league, loading } = useLeague();
   const [allGames, setAllGames] = useState<schema.GameDoc[]>([]);
   const [allPicks, setAllPicks] = useState<schema.PickDoc[]>([]);
   const [loadingGrid, setLoadingGrid] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   React.useEffect(() => {
-    if (!leagueId) return;
+    if (!leagueId || !playerId) return;
     setLoadingGrid(true);
     setLoadError(null);
     (async () => {
@@ -813,16 +813,16 @@ export function StandingsScreen() {
         const gamesData = await firebaseUtils.getAllGamesForLeague(leagueId);
         setAllGames(gamesData);
 
-        // Fetched per-week rather than as one unfiltered query across the
-        // whole picks collection — this is the exact same pattern Weekly
-        // Summary already uses successfully for a regular (non-commissioner)
-        // account. A single unfiltered query was untested against that case
-        // and risked hanging (see the try/catch here, which is also new —
-        // without it, any failure left this screen stuck on "Loading..."
-        // forever instead of showing an actual error).
+        // Two explicitly-filtered queries per week (own picks + visible
+        // picks), not one broad query — real testing showed Firestore only
+        // reliably allows a list query when its own WHERE filter matches,
+        // field for field, what the security rule checks. See
+        // getVisiblePicksForWeek in firebase-utils.ts for the full story;
+        // this replaced an earlier version that (still incorrectly)
+        // assumed a broad query plus a "simple" rule condition would work.
         const weeksInLeague = Array.from(new Set(gamesData.map((g) => g.week))).sort((a, b) => a - b);
         const picksByWeek = await Promise.all(
-          weeksInLeague.map((w) => firebaseUtils.getAllPicksForWeek(leagueId, w))
+          weeksInLeague.map((w) => firebaseUtils.getVisiblePicksForWeek(leagueId, w, playerId))
         );
         setAllPicks(picksByWeek.flat());
       } catch (err) {
@@ -831,7 +831,7 @@ export function StandingsScreen() {
         setLoadingGrid(false);
       }
     })();
-  }, [leagueId]);
+  }, [leagueId, playerId]);
 
   if (loading || loadingGrid) return <div className="p-4">Loading...</div>;
   if (loadError) return <div className="p-4 text-red-600 text-sm">{loadError}</div>;
@@ -1767,21 +1767,29 @@ export function CommissionerDashboard() {
 // ============================================================================
 
 export function EveryonesPicksScreen() {
-  const { leagueId, games, players, currentWeek, setCurrentWeek, league, loading } = useLeague();
+  const { leagueId, playerId, games, players, currentWeek, setCurrentWeek, league, loading } = useLeague();
   const [picks, setPicks] = useState<schema.PickDoc[]>([]);
   const [loadingPicks, setLoadingPicks] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   React.useEffect(() => {
-    if (!leagueId) return;
+    if (!leagueId || !playerId) return;
     setLoadingPicks(true);
+    setLoadError(null);
     (async () => {
-      const data = await firebaseUtils.getAllPicksForWeek(leagueId, currentWeek);
-      setPicks(data);
-      setLoadingPicks(false);
+      try {
+        const data = await firebaseUtils.getVisiblePicksForWeek(leagueId, currentWeek, playerId);
+        setPicks(data);
+      } catch (err) {
+        setLoadError(`Failed to load picks: ${err}`);
+      } finally {
+        setLoadingPicks(false);
+      }
     })();
-  }, [leagueId, currentWeek]);
+  }, [leagueId, playerId, currentWeek]);
 
   if (loading || loadingPicks) return <div className="p-4">Loading...</div>;
+  if (loadError) return <div className="p-4 text-red-600 text-sm">{loadError}</div>;
 
   // Same visual pattern as My Summary's grid, pivoted: columns are players
   // instead of weeks, since this is one week at a time rather than one

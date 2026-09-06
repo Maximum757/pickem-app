@@ -135,13 +135,18 @@ service cloud.firestore {
         // locked their own week early. This flag is set directly by
         // markPicksVisibleForGame() / updateCommissionerPicksVisibility()
         // in firebase-utils.ts at the moment either of those things
-        // happens — a PURE resource.data field check, no get() calls.
-        // A previous version tried to compute this at read time with
-        // get() calls against the game/league docs; that repeatedly failed
-        // for regular (non-commissioner) accounts on broad list queries in
-        // real testing, so this denormalized version replaces it — same
-        // query-filter-matches-rule-condition pattern already proven to
-        // work for the "own picks" branch above.
+        // happens. IMPORTANT: this rule condition alone is not enough —
+        // Firestore only allows a list query when the query's OWN where()
+        // filter matches, field for field, what this checks. A caller that
+        // queries picks without filtering on visibleToAll itself (even
+        // just by week) gets permission-denied for a non-commissioner
+        // account, full stop — confirmed by repeated real testing, despite
+        // this being about as simple a rule condition as exists. See
+        // getVisiblePicksForWeek() in firebase-utils.ts, which is the only
+        // client function that's actually safe to call here; getAllPicksForWeek's
+        // broad query only works for the commissioner, via the isCommissioner()
+        // branch above, which doesn't depend on resource.data and so has no
+        // such requirement.
         allow read: if isSignedIn() && resource.data.visibleToAll == true;
 
         // A player can only create their own pick, and only while the game

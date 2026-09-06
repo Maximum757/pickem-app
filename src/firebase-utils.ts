@@ -380,10 +380,60 @@ export async function getGamePickCountsForWeek(
  * their own docs, since the rule is evaluated per-document). Used by the
  * commissioner hub's per-game "who's missing" view and by WeeklySummary.
  */
+/**
+ * Used by commissioner-only screens. Deliberately unfiltered beyond week —
+ * safe there because the commissioner's access comes from isCommissioner(),
+ * a rule branch that doesn't depend on resource.data at all, so it's
+ * provable for any query shape. NOT safe for a regular player — see
+ * getVisiblePicksForWeek below for why, and use that instead for any
+ * player-facing screen.
+ */
 export async function getAllPicksForWeek(leagueId: string, week: number): Promise<schema.PickDoc[]> {
   const q = query(collection(db, `leagues/${leagueId}/picks`), where("week", "==", week));
   const querySnapshot = await getDocs(q);
   return querySnapshot.docs.map((d) => d.data() as schema.PickDoc);
+}
+
+/**
+ * The actual reliable way for a REGULAR player to fetch "picks I'm allowed
+ * to see" for a week. Runs two separately-filtered queries instead of one
+ * broad one, because that's what real testing has shown Firestore actually
+ * requires: a list query is only provably safe when the query's own WHERE
+ * filter matches, field-for-field, the exact condition the security rule
+ * checks — not just "the rule checks some resource.data field." Every
+ * earlier version of this (broad query + a rule condition the query never
+ * filtered on, even a simple one like visibleToAll==true) failed with
+ * permission-denied for non-commissioner accounts despite being logically
+ * correct on paper. These two queries each mirror their rule branch
+ * exactly: playerId==me matches "see your own picks," visibleToAll==true
+ * matches the reveal-once-locked branch.
+ */
+export async function getVisiblePicksForWeek(
+  leagueId: string,
+  week: number,
+  myPlayerId: string
+): Promise<schema.PickDoc[]> {
+  const [ownSnap, visibleSnap] = await Promise.all([
+    getDocs(
+      query(
+        collection(db, `leagues/${leagueId}/picks`),
+        where("week", "==", week),
+        where("playerId", "==", myPlayerId)
+      )
+    ),
+    getDocs(
+      query(
+        collection(db, `leagues/${leagueId}/picks`),
+        where("week", "==", week),
+        where("visibleToAll", "==", true)
+      )
+    ),
+  ]);
+
+  const byId = new Map<string, schema.PickDoc>();
+  ownSnap.docs.forEach((d) => byId.set(d.id, d.data() as schema.PickDoc));
+  visibleSnap.docs.forEach((d) => byId.set(d.id, d.data() as schema.PickDoc));
+  return Array.from(byId.values());
 }
 
 /**
