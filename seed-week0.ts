@@ -108,22 +108,22 @@ interface Week0Game {
 // games first in kickoff order, then Sunday, then Monday. Matches what was
 // agreed: Thu/Fri games dropped for lead time, all ranked Sun/Mon games added.
 const WEEK0_GAMES: Week0Game[] = [
-  { id: "w0-1", away: "North Texas", home: "Indiana", kickoff: "2026-09-05T16:00:00-04:00" },
-  { id: "w0-2", away: "East Carolina", home: "Alabama", kickoff: "2026-09-05T16:00:00-04:00" },
-  { id: "w0-3", away: "Ball State", home: "Ohio State", kickoff: "2026-09-05T16:30:00-04:00" },
-  { id: "w0-4", away: "Tennessee State", home: "Georgia", kickoff: "2026-09-05T19:00:00-04:00" },
-  { id: "w0-5", away: "Baylor", home: "Auburn", kickoff: "2026-09-05T19:30:00-04:00", neutralSite: "Atlanta, GA" },
-  { id: "w0-6", away: "Boise State", home: "Oregon", kickoff: "2026-09-05T19:30:00-04:00" },
-  { id: "w0-7", away: "Texas State", home: "Texas", kickoff: "2026-09-05T19:30:00-04:00" },
-  { id: "w0-8", away: "Tulane", home: "Duke", kickoff: "2026-09-05T19:30:00-04:00" },
-  { id: "w0-9", away: "Clemson", home: "LSU", kickoff: "2026-09-05T23:30:00-04:00" },
-  { id: "w0-10", away: "Western Michigan", home: "Michigan", kickoff: "2026-09-05T23:30:00-04:00" },
-  { id: "w0-11", away: "Florida Atlantic", home: "Florida", kickoff: "2026-09-05T23:45:00-04:00" },
-  { id: "w0-12", away: "UCLA", home: "California", kickoff: "2026-09-06T02:30:00-04:00" },
-  { id: "w0-13", away: "Washington State", home: "Washington", kickoff: "2026-09-06T20:00:00-04:00" },
-  { id: "w0-14", away: "Louisville", home: "Ole Miss", kickoff: "2026-09-06T23:30:00-04:00", neutralSite: "Nashville, TN" },
-  { id: "w0-15", away: "Wisconsin", home: "Notre Dame", kickoff: "2026-09-06T23:30:00-04:00", neutralSite: "Green Bay, WI" },
-  { id: "w0-16", away: "SMU", home: "Florida State", kickoff: "2026-09-07T23:30:00-04:00" },
+  { id: "w0-1", away: "North Texas", home: "Indiana", kickoff: "2026-09-05T12:00:00-04:00" },
+  { id: "w0-2", away: "East Carolina", home: "Alabama", kickoff: "2026-09-05T12:00:00-04:00" },
+  { id: "w0-3", away: "Ball State", home: "Ohio State", kickoff: "2026-09-05T12:30:00-04:00" },
+  { id: "w0-4", away: "Tennessee State", home: "Georgia", kickoff: "2026-09-05T15:00:00-04:00" },
+  { id: "w0-5", away: "Baylor", home: "Auburn", kickoff: "2026-09-05T15:30:00-04:00", neutralSite: "Atlanta, GA" },
+  { id: "w0-6", away: "Boise State", home: "Oregon", kickoff: "2026-09-05T15:30:00-04:00" },
+  { id: "w0-7", away: "Texas State", home: "Texas", kickoff: "2026-09-05T15:30:00-04:00" },
+  { id: "w0-8", away: "Tulane", home: "Duke", kickoff: "2026-09-05T15:30:00-04:00" },
+  { id: "w0-9", away: "Clemson", home: "LSU", kickoff: "2026-09-05T19:30:00-04:00" },
+  { id: "w0-10", away: "Western Michigan", home: "Michigan", kickoff: "2026-09-05T19:30:00-04:00" },
+  { id: "w0-11", away: "Florida Atlantic", home: "Florida", kickoff: "2026-09-05T19:45:00-04:00" },
+  { id: "w0-12", away: "UCLA", home: "California", kickoff: "2026-09-05T22:30:00-04:00" },
+  { id: "w0-13", away: "Washington State", home: "Washington", kickoff: "2026-09-06T16:00:00-04:00" },
+  { id: "w0-14", away: "Louisville", home: "Ole Miss", kickoff: "2026-09-06T19:30:00-04:00", neutralSite: "Nashville, TN" },
+  { id: "w0-15", away: "Wisconsin", home: "Notre Dame", kickoff: "2026-09-06T19:30:00-04:00", neutralSite: "Green Bay, WI" },
+  { id: "w0-16", away: "SMU", home: "Florida State", kickoff: "2026-09-07T19:30:00-04:00" },
 ];
 
 async function seedWeek0() {
