@@ -33,6 +33,7 @@ interface LeagueContextType {
   updateMyName: (name: string) => Promise<void>;
   updatePlayerPhone: (playerId: string, phone: string) => Promise<void>;
   assignMissedPick: (gameId: string, playerId: string, pickedTeam: string) => Promise<void>;
+  lockAllPassedKickoffGames: () => Promise<number>;
   setPlayerPaid: (playerId: string, hasPaid: boolean) => Promise<void>;
   removePlayer: (playerId: string) => Promise<void>;
   restorePlayer: (playerId: string) => Promise<void>;
@@ -531,6 +532,20 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const handleLockAllPassedKickoffGames = async (): Promise<number> => {
+    if (!leagueId) return 0;
+    try {
+      const count = await firebaseUtils.lockAllPassedKickoffGames(leagueId, currentWeek);
+      if (count > 0) {
+        setGames(await loadGamesWithCounts(leagueId, currentWeek));
+      }
+      return count;
+    } catch (err) {
+      setError(`Failed to lock games: ${err}`);
+      return 0;
+    }
+  };
+
   const handleSetPlayerPaid = async (targetPlayerId: string, hasPaid: boolean) => {
     if (!leagueId) return;
     try {
@@ -669,6 +684,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         updateMyName: handleUpdateMyName,
         updatePlayerPhone: handleUpdatePlayerPhone,
         assignMissedPick: handleAssignMissedPick,
+        lockAllPassedKickoffGames: handleLockAllPassedKickoffGames,
         setPlayerPaid: handleSetPlayerPaid,
         removePlayer: handleRemovePlayer,
         restorePlayer: handleRestorePlayer,

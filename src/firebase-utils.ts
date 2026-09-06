@@ -1009,6 +1009,37 @@ export async function lockGame(leagueId: string, gameId: string): Promise<void> 
   await recomputeGamePickCounts(leagueId, gameId);
 }
 
+/**
+ * Commissioner's on-demand bulk version of the same thing the scheduled
+ * GitHub Actions job does automatically every ~10 minutes (see
+ * lock-passed-games.ts) — locks every game in this week whose kickoff has
+ * already passed, in one click, rather than waiting for the next
+ * scheduled run. Scoped to one week since that's the natural unit
+ * ("once the Sunday games kick off"), not the whole season.
+ */
+export async function lockAllPassedKickoffGames(leagueId: string, week: number): Promise<number> {
+  const gamesForWeek = await getGamesForWeek(leagueId, week);
+  const now = Timestamp.now();
+  const toLock = gamesForWeek.filter(
+    (g) => !g.isLocked && !g.timeTBD && g.gameTime && g.gameTime.toMillis() <= now.toMillis()
+  );
+
+  if (toLock.length === 0) return 0;
+
+  const batch = writeBatch(db);
+  toLock.forEach((g) => {
+    const gameRef = doc(db, `leagues/${leagueId}/games`, g.id);
+    batch.update(gameRef, { isLocked: true });
+  });
+  await batch.commit();
+
+  // Pick counts per game are cheap enough to just recompute individually
+  // after the batch, same as the single-game lockGame() does.
+  await Promise.all(toLock.map((g) => recomputeGamePickCounts(leagueId, g.id)));
+
+  return toLock.length;
+}
+
 // ============================================================================
 // SCHEDULE FLEX: reordering and time edits (commissioner only)
 // ============================================================================

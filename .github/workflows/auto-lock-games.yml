@@ -1,0 +1,40 @@
+name: Auto-lock games at kickoff
+
+on:
+  schedule:
+    # Every 10 minutes, all day — the actual mechanism behind "games lock
+    # automatically at kickoff." Picks are already blocked at kickoff
+    # regardless (that's enforced in the security rules, not this job),
+    # but revealing other players' picks in Weekly Summary depends on the
+    # isLocked field genuinely being true, which nothing else sets.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {} # trigger manually from the Actions tab too
+
+jobs:
+  lock-games:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm install
+
+      - name: Write service account key from secret
+        run: echo "$FIREBASE_SERVICE_ACCOUNT_JSON" > serviceAccountKey.json
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+
+      - name: Write .env.local
+        run: |
+          echo "FIREBASE_SERVICE_ACCOUNT_PATH=./serviceAccountKey.json" >> .env.local
+          echo "REACT_APP_LEAGUE_ID=${{ vars.REACT_APP_LEAGUE_ID || 'week0-test-league' }}" >> .env.local
+
+      - name: Lock passed-kickoff games
+        run: npm run lock:passed-games
+
+      - name: Clean up credentials
+        if: always()
+        run: rm -f serviceAccountKey.json .env.local
