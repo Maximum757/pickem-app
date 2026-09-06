@@ -98,7 +98,11 @@ function StatusCircle({
 }) {
   const { userPickResults } = useLeague();
   const isFinal = !!game.result;
-  const isLocked = game.isLocked && !isFinal;
+  // Same real-time-vs-stale-field issue as the results-entry screen — a
+  // game whose kickoff has passed should show as locked here too, not
+  // just once something explicitly flips the isLocked field.
+  const isPastKickoff = !game.timeTBD && !!game.gameTime && new Date(game.gameTime) <= new Date();
+  const isLocked = (game.isLocked || isPastKickoff) && !isFinal;
 
   if (isLocked) {
     return (
@@ -373,7 +377,7 @@ export function PicksScreen() {
 
           function subtextFor(abbr: string): string {
             const isAway = abbr === game.awayTeam;
-            if (game.isLocked && game.pickCounts) {
+            if (isLocked && game.pickCounts) {
               const count = game.pickCounts[abbr] || 0;
               return `${count} pick${count === 1 ? "" : "s"}`;
             }
@@ -1189,7 +1193,17 @@ export function CommissionerDashboard() {
           {games
             .filter((g) => !g.result)
             .map((g) => {
-              const canDeclare = g.isLocked;
+              // Was purely `g.isLocked` — but nothing ever flips that field
+              // true just because kickoff passed (that's enforced in the
+              // security rules for picks, not reflected back onto the game
+              // doc). Without this real-time check, results couldn't be
+              // entered for a game that's already happened until someone
+              // separately went to Schedule Manager and manually locked it —
+              // a confusing dead end. Mirrors the same check PicksScreen
+              // already does correctly.
+              const isPastKickoff =
+                !g.timeTBD && !!g.gameTime && new Date(g.gameTime) <= new Date();
+              const canDeclare = g.isLocked || isPastKickoff;
               return (
                 <div key={g.id} className="border rounded bg-white p-3">
                   <div className="flex items-center justify-between mb-2">
@@ -1388,8 +1402,12 @@ export function CommissionerDashboard() {
             const isExpanded = fillingGameId === game.id;
             // Only makes sense to fill in a missed pick once the game's
             // actually locked — before that, the player can still just pick
-            // it themselves.
-            const canFillIn = game.isLocked && missing.length > 0;
+            // it themselves. Same real-time check as the results-entry
+            // section above: g.isLocked alone doesn't reflect kickoff
+            // having passed, only an explicit lock/result action.
+            const gameIsPastKickoff =
+              !game.timeTBD && !!game.gameTime && new Date(game.gameTime) <= new Date();
+            const canFillIn = (game.isLocked || gameIsPastKickoff) && missing.length > 0;
             return (
               <div key={game.id} className="border rounded bg-white px-3 py-2 mb-1">
                 <div className="flex items-center justify-between">
