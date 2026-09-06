@@ -1756,6 +1756,113 @@ export function CommissionerDashboard() {
 // no separate export/share pipeline, since a phone screenshot of this
 // section is exactly what the snapshot showed being sent.
 
+// ============================================================================
+// EVERYONE'S PICKS - The genuinely player-facing "who picked what" view.
+// Separate from WeeklySummary (which is the commissioner's screenshot-and-
+// send recap tool, with scoring/rank baggage that isn't the point here).
+// This is just: for each game this week, who picked which team — visible
+// exactly per the same reveal rules as everywhere else (a game's picks
+// show once it locks; the commissioner's own may show earlier if they've
+// locked their week).
+// ============================================================================
+
+export function EveryonesPicksScreen() {
+  const { leagueId, games, players, currentWeek, setCurrentWeek, league, loading } = useLeague();
+  const [picks, setPicks] = useState<schema.PickDoc[]>([]);
+  const [loadingPicks, setLoadingPicks] = useState(true);
+
+  React.useEffect(() => {
+    if (!leagueId) return;
+    setLoadingPicks(true);
+    (async () => {
+      const data = await firebaseUtils.getAllPicksForWeek(leagueId, currentWeek);
+      setPicks(data);
+      setLoadingPicks(false);
+    })();
+  }, [leagueId, currentWeek]);
+
+  if (loading || loadingPicks) return <div className="p-4">Loading...</div>;
+
+  const nameById = new Map(players.map((p) => [p.id, p.name]));
+  const picksByGame = new Map<string, schema.PickDoc[]>();
+  picks.forEach((p) => {
+    if (!picksByGame.has(p.gameId)) picksByGame.set(p.gameId, []);
+    picksByGame.get(p.gameId)!.push(p);
+  });
+
+  return (
+    <div className="p-4">
+      <WeekSelector currentWeek={currentWeek} officialWeek={league?.currentWeek} onChange={setCurrentWeek} />
+      <h2 className="text-2xl font-bold mb-1">Everyone's Picks — Week {currentWeek}</h2>
+      <p className="text-sm text-gray-600 mb-4">
+        Who picked what. A game's picks show up here once it locks at kickoff — until then it's
+        still private, same as everywhere else.
+      </p>
+
+      <div className="space-y-3">
+        {games.map((g) => {
+          const gamePicks = picksByGame.get(g.id) || [];
+          const isRevealed = gamePicks.length > 0 || g.isLocked || !!g.result;
+
+          if (!isRevealed) {
+            return (
+              <div key={g.id} className="border rounded bg-gray-50 p-3">
+                <div className="text-sm font-semibold text-gray-500">
+                  {g.awayTeam} @ {g.homeTeam}
+                </div>
+                <div className="text-xs text-gray-400 mt-1">
+                  Picks hidden until kickoff ({g.timeTBD || !g.gameTime ? "Time TBD" : formatKickoff(new Date(g.gameTime))})
+                </div>
+              </div>
+            );
+          }
+
+          const byTeam = new Map<string, string[]>();
+          gamePicks.forEach((p) => {
+            const name = nameById.get(p.playerId) || p.playerId;
+            if (!byTeam.has(p.pickedTeam)) byTeam.set(p.pickedTeam, []);
+            byTeam.get(p.pickedTeam)!.push(name);
+          });
+
+          return (
+            <div key={g.id} className="border rounded bg-white p-3">
+              <div className="text-sm font-semibold mb-2">
+                {g.awayTeam} @ {g.homeTeam}
+                {g.result && (
+                  <span className="text-xs font-normal text-gray-500 ml-2">
+                    Final: {g.result.winner} won
+                  </span>
+                )}
+              </div>
+              {[g.awayTeam, g.homeTeam].map((team) => {
+                const names = byTeam.get(team) || [];
+                const colors = getTeamColor(team);
+                if (names.length === 0) return null;
+                return (
+                  <div key={team} className="flex items-start gap-2 mb-1.5 last:mb-0">
+                    <span
+                      className="text-xs font-bold px-2 py-1 rounded whitespace-nowrap"
+                      style={{ background: colors.bg, color: colors.fg }}
+                    >
+                      {team} ({names.length})
+                    </span>
+                    <span className="text-xs text-gray-600 pt-1">{names.join(", ")}</span>
+                  </div>
+                );
+              })}
+              {gamePicks.length === 0 && (
+                <p className="text-xs text-gray-400">Locked, but nobody's picked yet.</p>
+              )}
+            </div>
+          );
+        })}
+        {games.length === 0 && <p className="text-sm text-gray-500">No games this week yet.</p>}
+      </div>
+    </div>
+  );
+}
+
+
 export function WeeklySummary() {
   const { leagueId, players, standings, currentWeek, userPicks, games } = useLeague();
   const [summaryWeek, setSummaryWeek] = useState(currentWeek);
@@ -1938,7 +2045,7 @@ export function WeeklySummary() {
 // MAIN APP COMPONENT
 // ============================================================================
 
-type ViewType = "picks" | "mysummary" | "standings" | "payouts" | "commissioner" | "summary" | "members";
+type ViewType = "picks" | "mysummary" | "everyonespicks" | "standings" | "payouts" | "commissioner" | "summary" | "members";
 
 // ============================================================================
 // MEMBERS SCREEN - Roster with contact info and dues tracking (commissioner only)
@@ -2237,6 +2344,16 @@ export function App() {
               My Summary
             </button>
             <button
+              onClick={() => setView("everyonespicks")}
+              className={`py-2 px-4 rounded font-medium transition ${
+                view === "everyonespicks"
+                  ? "bg-blue-500 text-white"
+                  : "bg-gray-200 hover:bg-gray-300"
+              }`}
+            >
+              Everyone's Picks
+            </button>
+            <button
               onClick={() => setView("standings")}
               className={`py-2 px-4 rounded font-medium transition ${
                 view === "standings"
@@ -2298,6 +2415,7 @@ export function App() {
         {loading && <div className="p-4 text-gray-600">Loading...</div>}
         {!loading && view === "picks" && <PicksScreen />}
         {!loading && view === "mysummary" && <MySummaryScreen />}
+        {!loading && view === "everyonespicks" && <EveryonesPicksScreen />}
         {!loading && view === "standings" && <StandingsScreen />}
         {!loading && view === "payouts" && <PayoutsScreen />}
         {!loading && view === "commissioner" && isCommissioner && <CommissionerDashboard />}
