@@ -2,7 +2,7 @@
  * React Components for Pick 'Em App
  */
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useLeague } from "./LeagueContext";
 import { useAuth } from "./AuthContext";
 import { getTeamColor, getTeamDisplayName, getTeamLogoUrl } from "./teamColors";
@@ -22,6 +22,23 @@ function formatKickoff(date: Date): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+// React only re-runs a component's render when something actually triggers
+// it — a state change, a prop change, user interaction. A plain `new
+// Date()` inline in a render is only ever as fresh as the last render, so
+// a "locks at kickoff" check silently goes stale the moment nobody's
+// touched the page since before kickoff, even though the underlying logic
+// is correct. This hook forces a re-render on an interval so any
+// kickoff-time comparison downstream of it naturally catches up on its
+// own, without requiring the user to click something or reload.
+function useNow(intervalMs: number = 30000): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
 }
 
 // ============================================================================
@@ -97,11 +114,13 @@ function StatusCircle({
   picked: string | undefined;
 }) {
   const { userPickResults } = useLeague();
+  const now = useNow();
   const isFinal = !!game.result;
   // Same real-time-vs-stale-field issue as the results-entry screen — a
   // game whose kickoff has passed should show as locked here too, not
-  // just once something explicitly flips the isLocked field.
-  const isPastKickoff = !game.timeTBD && !!game.gameTime && new Date(game.gameTime) <= new Date();
+  // just once something explicitly flips the isLocked field. useNow()
+  // keeps this live rather than only ever as fresh as the last render.
+  const isPastKickoff = !game.timeTBD && !!game.gameTime && new Date(game.gameTime) <= now;
   const isLocked = (game.isLocked || isPastKickoff) && !isFinal;
 
   if (isLocked) {
@@ -205,6 +224,7 @@ export function PicksScreen() {
     myWeekLocked,
     setMyWeekLocked,
   } = useLeague();
+  const now = useNow();
   const [tbDraft, setTbDraft] = useState<string>(myTiebreakerGuess?.toString() ?? "");
   // Per-device preference, not per-account — a shared family tablet stays
   // in logo mode across whoever's signed in, which is the actual use case
@@ -360,7 +380,7 @@ export function PicksScreen() {
           // nobody's flipped isLocked yet. Checking it here too means the
           // button visibly disables instead of inviting a click the server
           // will reject anyway.
-          const isPastKickoff = !game.timeTBD && !!game.gameTime && new Date(game.gameTime) <= new Date();
+          const isPastKickoff = !game.timeTBD && !!game.gameTime && new Date(game.gameTime) <= now;
           const isLocked = (game.isLocked || isPastKickoff) && !isFinal;
           const isClickable = !isLocked && !isFinal && !myWeekLocked;
 
@@ -1028,8 +1048,12 @@ export function CommissionerDashboard() {
     unlockTiebreaker,
     assignMissedPick,
     setLeagueMaxPlayers,
+    lockAllPassedKickoffGames,
   } = useLeague();
+  const now = useNow();
   const [maxPlayersDraft, setMaxPlayersDraft] = useState<string>("");
+  const [lockingAll, setLockingAll] = useState(false);
+  const [lastLockResult, setLastLockResult] = useState<string | null>(null);
   const [tiebreakerQ, setTiebreakerQ] = useState("");
   const [tiebreakerAnswerDraft, setTiebreakerAnswerDraft] = useState("");
   const [tiebreakerRule, setTiebreakerRule] = useState<"closest" | "closest_without_going_over">(
@@ -1189,6 +1213,27 @@ export function CommissionerDashboard() {
           moment kickoff passes.
         </p>
 
+        <div className="mb-4 flex items-center gap-2">
+          <button
+            onClick={async () => {
+              setLockingAll(true);
+              const count = await lockAllPassedKickoffGames();
+              setLastLockResult(
+                count > 0 ? `Locked ${count} game${count === 1 ? "" : "s"}.` : "Nothing to lock right now."
+              );
+              setLockingAll(false);
+            }}
+            disabled={lockingAll}
+            className="text-xs font-bold px-3 py-1.5 rounded-full bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50"
+          >
+            {lockingAll ? "Locking…" : "Lock all games past kickoff"}
+          </button>
+          <span className="text-xs text-gray-500">
+            {lastLockResult ||
+              "Games also lock automatically in the background every ~10 minutes — this does it immediately."}
+          </span>
+        </div>
+
         <div className="space-y-3">
           {games
             .filter((g) => !g.result)
@@ -1202,7 +1247,7 @@ export function CommissionerDashboard() {
               // a confusing dead end. Mirrors the same check PicksScreen
               // already does correctly.
               const isPastKickoff =
-                !g.timeTBD && !!g.gameTime && new Date(g.gameTime) <= new Date();
+                !g.timeTBD && !!g.gameTime && new Date(g.gameTime) <= now;
               const canDeclare = g.isLocked || isPastKickoff;
               return (
                 <div key={g.id} className="border rounded bg-white p-3">
@@ -1406,7 +1451,7 @@ export function CommissionerDashboard() {
             // section above: g.isLocked alone doesn't reflect kickoff
             // having passed, only an explicit lock/result action.
             const gameIsPastKickoff =
-              !game.timeTBD && !!game.gameTime && new Date(game.gameTime) <= new Date();
+              !game.timeTBD && !!game.gameTime && new Date(game.gameTime) <= now;
             const canFillIn = (game.isLocked || gameIsPastKickoff) && missing.length > 0;
             return (
               <div key={game.id} className="border rounded bg-white px-3 py-2 mb-1">
