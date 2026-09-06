@@ -1807,9 +1807,19 @@ export function EveryonesPicksScreen() {
   picks.forEach((p) => pickByPlayerGame.set(`${p.playerId}_${p.gameId}`, p));
 
   const sortedGames = [...games].sort((a, b) => a.order - b.order);
+  // Viewer's own column first, then the commissioner's (skipped if that's
+  // the same person — a commissioner viewing their own summary just gets
+  // their one column up front, no duplicate), then everyone else
+  // alphabetical.
+  const commissionerId = league?.commissionerId;
   const sortedPlayers = [...players]
     .filter((p) => !p.removedFromLeague)
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => {
+      const rank = (p: typeof a) => (p.id === playerId ? 0 : p.id === commissionerId ? 1 : 2);
+      const rankDiff = rank(a) - rank(b);
+      if (rankDiff !== 0) return rankDiff;
+      return a.name.localeCompare(b.name);
+    });
 
   return (
     <div className="p-4">
