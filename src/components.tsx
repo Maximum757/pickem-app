@@ -1822,15 +1822,17 @@ export function EveryonesPicksScreen() {
           <table className="border-collapse">
             <thead>
               <tr>
-                <th className="text-xs font-bold text-gray-600 px-1 pb-2 text-left whitespace-nowrap sticky left-0 bg-white">
+                <th className="text-xs font-bold text-gray-600 px-1 pb-2 text-left whitespace-nowrap sticky left-0 bg-white align-bottom">
                   Game
                 </th>
                 {sortedPlayers.map((p) => (
-                  <th
-                    key={p.id}
-                    className="text-xs font-bold text-gray-600 px-1 pb-2 text-left whitespace-nowrap"
-                  >
-                    {p.name}
+                  <th key={p.id} className="w-20 px-0 pb-2 align-bottom">
+                    <div
+                      className="text-xs font-bold text-gray-600 whitespace-nowrap mx-auto"
+                      style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+                    >
+                      {p.name}
+                    </div>
                   </th>
                 ))}
               </tr>

@@ -14,7 +14,8 @@
     "seed:weeks9-18": "tsc -p tsconfig.weeks9-18.json && cp dist-engine-package.json dist-weeks9-18/package.json && node --env-file=.env.local dist-weeks9-18/seed-weeks9-18.js",
     "patch:spreads": "tsc -p tsconfig.patch-spreads.json && cp dist-engine-package.json dist-patch-spreads/package.json && node --env-file=.env.local dist-patch-spreads/patch-spreads.js",
     "refresh:spreads": "tsc -p tsconfig.refresh-spreads.json && cp dist-engine-package.json dist-refresh-spreads/package.json && node --env-file=.env.local dist-refresh-spreads/refresh-spreads.js",
-    "lock:passed-games": "tsc -p tsconfig.lock-passed-games.json && cp dist-engine-package.json dist-lock-passed-games/package.json && node --env-file=.env.local dist-lock-passed-games/lock-passed-games.js"
+    "lock:passed-games": "tsc -p tsconfig.lock-passed-games.json && cp dist-engine-package.json dist-lock-passed-games/package.json && node --env-file=.env.local dist-lock-passed-games/lock-passed-games.js",
+    "backfill:visibility": "tsc -p tsconfig.backfill-visibility.json && cp dist-engine-package.json dist-backfill-visibility/package.json && node --env-file=.env.local dist-backfill-visibility/backfill-visibility.js"
   },
   "dependencies": {
     "cheerio": "^1.2.0",
