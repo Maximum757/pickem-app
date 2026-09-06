@@ -917,7 +917,7 @@ export function StandingsScreen() {
             <tr className="border-b-2">
               <th className="text-left py-2 pr-3 sticky left-0 bg-white">Rank</th>
               <th className="text-left py-2 pr-4 sticky left-8 bg-white">Player</th>
-              <th className="text-right py-2 px-3 font-bold border-l-2 border-r-2">Total</th>
+              <th className="text-center py-2 px-3 font-bold border-l-2 border-r-2">Total</th>
               {weeks.map((w) => (
                 <th key={w} className="text-right py-2 px-2 font-semibold text-gray-600 whitespace-nowrap">
                   Wk {w}
@@ -939,7 +939,7 @@ export function StandingsScreen() {
                     <td className="pt-2 pr-4 font-bold text-base sticky left-8 bg-green-50">
                       {s.playerName}
                     </td>
-                    <td className="text-right pt-2 px-3 font-bold text-lg border-l-2 border-r-2">
+                    <td className="text-center pt-2 px-3 font-bold text-lg border-l-2 border-r-2">
                       {s.totalPoints}
                     </td>
                     {weeks.map((w) => (
@@ -948,11 +948,11 @@ export function StandingsScreen() {
                       </td>
                     ))}
                   </tr>
-                  <tr className="bg-green-50 border-b-2 border-gray-200">
-                    <td className="pb-2 pr-4 text-xs text-gray-500 sticky left-8 bg-green-50">
+                  <tr className="border-b-2 border-gray-200">
+                    <td className="pb-2 pr-4 text-xs text-gray-500 sticky left-8 bg-white">
                       {winnings > 0 ? `$${winnings.toLocaleString()} won` : ""}
                     </td>
-                    <td className="text-right pb-2 px-3 text-xs text-gray-500 border-l-2 border-r-2">
+                    <td className="text-center whitespace-nowrap pb-2 px-3 text-xs text-gray-500 border-l-2 border-r-2">
                       {s.totalCorrect} correct
                     </td>
                     {weeks.map((w) => (
