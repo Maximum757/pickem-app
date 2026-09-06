@@ -860,11 +860,16 @@ export function StandingsScreen() {
 
   // Weekly winnings: for each week, whoever had the most points that week
   // splits that week's payout evenly (a genuine tie is realistic in a
-  // contrarian pool). Only weeks with actual points on the board count —
-  // a week where everyone's still at 0 isn't "won" by anybody yet.
+  // contrarian pool). Only counted once every game in that week is final —
+  // showing a leader's winnings while the week's still in progress would
+  // imply someone's "won" money that's still entirely up in the air.
   const weeklyWinningsByPlayer = new Map<string, number>();
   if (league?.weeklyPayout) {
     weeks.forEach((w) => {
+      const weekGames = allGames.filter((g) => g.week === w);
+      const weekComplete = weekGames.length > 0 && weekGames.every((g) => !!g.result);
+      if (!weekComplete) return;
+
       let maxPts = 0;
       let leaders: string[] = [];
       pointsByPlayerWeek.forEach((weekMap, playerId) => {
