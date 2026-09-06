@@ -1783,84 +1783,112 @@ export function EveryonesPicksScreen() {
 
   if (loading || loadingPicks) return <div className="p-4">Loading...</div>;
 
-  const nameById = new Map(players.map((p) => [p.id, p.name]));
-  const picksByGame = new Map<string, schema.PickDoc[]>();
-  picks.forEach((p) => {
-    if (!picksByGame.has(p.gameId)) picksByGame.set(p.gameId, []);
-    picksByGame.get(p.gameId)!.push(p);
-  });
+  // Same visual pattern as My Summary's grid, pivoted: columns are players
+  // instead of weeks, since this is one week at a time rather than one
+  // player across the whole season. A cell with no data means either the
+  // player hasn't picked, or they have but it isn't revealed to this
+  // viewer yet (their own picks always come through; everyone else's only
+  // once locked) — deliberately indistinguishable, same "—" placeholder
+  // either way, since that's the honest amount of information to show.
+  const pickByPlayerGame = new Map<string, schema.PickDoc>();
+  picks.forEach((p) => pickByPlayerGame.set(`${p.playerId}_${p.gameId}`, p));
+
+  const sortedGames = [...games].sort((a, b) => a.order - b.order);
+  const sortedPlayers = [...players]
+    .filter((p) => !p.removedFromLeague)
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <div className="p-4">
       <WeekSelector currentWeek={currentWeek} officialWeek={league?.currentWeek} onChange={setCurrentWeek} />
-      <h2 className="text-2xl font-bold mb-1">Everyone's Picks — Week {currentWeek}</h2>
+      <h2 className="text-2xl font-bold mb-1">Weekly Summary</h2>
       <p className="text-sm text-gray-600 mb-4">
-        Who picked what. A game's picks show up here once it locks at kickoff — until then it's
-        still private, same as everywhere else.
+        Who picked what this week. A game's picks show up once it locks at kickoff — until then
+        it's still private, same as everywhere else.
       </p>
 
-      <div className="space-y-3">
-        {games.map((g) => {
-          const gamePicks = picksByGame.get(g.id) || [];
-          const isRevealed = gamePicks.length > 0 || g.isLocked || !!g.result;
-
-          if (!isRevealed) {
-            return (
-              <div key={g.id} className="border rounded bg-gray-50 p-3">
-                <div className="text-sm font-semibold text-gray-500">
-                  {g.awayTeam} @ {g.homeTeam}
-                </div>
-                <div className="text-xs text-gray-400 mt-1">
-                  Picks hidden until kickoff ({g.timeTBD || !g.gameTime ? "Time TBD" : formatKickoff(new Date(g.gameTime))})
-                </div>
-              </div>
-            );
-          }
-
-          const byTeam = new Map<string, string[]>();
-          gamePicks.forEach((p) => {
-            const name = nameById.get(p.playerId) || p.playerId;
-            if (!byTeam.has(p.pickedTeam)) byTeam.set(p.pickedTeam, []);
-            byTeam.get(p.pickedTeam)!.push(name);
-          });
-
-          return (
-            <div key={g.id} className="border rounded bg-white p-3">
-              <div className="text-sm font-semibold mb-2">
-                {g.awayTeam} @ {g.homeTeam}
-                {g.result && (
-                  <span className="text-xs font-normal text-gray-500 ml-2">
-                    Final: {g.result.winner} won
-                  </span>
-                )}
-              </div>
-              {[g.awayTeam, g.homeTeam].map((team) => {
-                const names = byTeam.get(team) || [];
-                const colors = getTeamColor(team);
-                if (names.length === 0) return null;
-                return (
-                  <div key={team} className="flex items-start gap-2 mb-1.5 last:mb-0">
-                    <span
-                      className="text-xs font-bold px-2 py-1 rounded whitespace-nowrap"
-                      style={{ background: colors.bg, color: colors.fg }}
-                    >
-                      {team} ({names.length})
-                    </span>
-                    <span className="text-xs text-gray-600 pt-1">{names.join(", ")}</span>
-                  </div>
-                );
-              })}
-              {gamePicks.length === 0 && (
-                <p className="text-xs text-gray-400">Locked, but nobody's picked yet.</p>
-              )}
-            </div>
-          );
-        })}
-        {games.length === 0 && <p className="text-sm text-gray-500">No games this week yet.</p>}
-      </div>
+      {sortedGames.length === 0 || sortedPlayers.length === 0 ? (
+        <p className="text-sm text-gray-500">No games or members yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="border-collapse">
+            <thead>
+              <tr>
+                <th className="text-xs font-bold text-gray-600 px-1 pb-2 text-left whitespace-nowrap sticky left-0 bg-white">
+                  Game
+                </th>
+                {sortedPlayers.map((p) => (
+                  <th
+                    key={p.id}
+                    className="text-xs font-bold text-gray-600 px-1 pb-2 text-left whitespace-nowrap"
+                  >
+                    {p.name}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedGames.map((g) => (
+                <tr key={g.id}>
+                  <td className="p-0.5 text-xs text-gray-600 whitespace-nowrap sticky left-0 bg-white pr-2">
+                    {g.awayTeam} @ {g.homeTeam}
+                  </td>
+                  {sortedPlayers.map((p) => {
+                    const pick = pickByPlayerGame.get(`${p.id}_${g.id}`);
+                    if (!pick) {
+                      return (
+                        <td key={p.id} className="p-0.5">
+                          <div className="w-20 h-9 rounded flex items-center justify-center text-xs text-gray-300 border border-dashed">
+                            —
+                          </div>
+                        </td>
+                      );
+                    }
+                    const isFinal = !!g.result;
+                    const isCorrect = pick.isCorrect === true;
+                    const colors = getTeamColor(pick.pickedTeam);
+                    const showColor = !isFinal || isCorrect;
+                    return (
+                      <td key={p.id} className="p-0.5">
+                        <div
+                          className="w-20 h-9 rounded flex items-center justify-center text-center text-xs font-bold"
+                          style={{
+                            background: showColor ? colors.bg : "#e5e7eb",
+                            color: showColor ? colors.fg : "#6b7280",
+                          }}
+                        >
+                          {pick.pickedTeam}
+                          {isFinal && isCorrect && pick.pointsAwarded !== undefined && (
+                            <span>&nbsp;({pick.pointsAwarded})</span>
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+              <tr className="border-t-2">
+                <td className="p-1 text-xs font-bold text-gray-700 sticky left-0 bg-white">Total</td>
+                {sortedPlayers.map((p) => {
+                  const total = sortedGames.reduce((sum, g) => {
+                    const pick = pickByPlayerGame.get(`${p.id}_${g.id}`);
+                    return sum + (pick?.isCorrect ? pick.pointsAwarded || 0 : 0);
+                  }, 0);
+                  return (
+                    <td key={p.id} className="p-1 text-xs font-bold text-gray-700">
+                      {total}
+                    </td>
+                  );
+                })}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
+
 
 
 export function WeeklySummary() {
@@ -1919,7 +1947,7 @@ export function WeeklySummary() {
 
   return (
     <div className="p-4 max-w-2xl">
-      <h2 className="text-2xl font-bold mb-1">Weekly Summary</h2>
+      <h2 className="text-2xl font-bold mb-1">Weekly Recap</h2>
       <p className="text-sm text-gray-600 mb-4">Screenshot this to send out</p>
 
       <WeekSelector currentWeek={summaryWeek} officialWeek={currentWeek} onChange={setSummaryWeek} />
@@ -2351,7 +2379,7 @@ export function App() {
                   : "bg-gray-200 hover:bg-gray-300"
               }`}
             >
-              Everyone's Picks
+              Weekly Summary
             </button>
             <button
               onClick={() => setView("standings")}
@@ -2385,16 +2413,18 @@ export function App() {
                 Commissioner
               </button>
             )}
-            <button
-              onClick={() => setView("summary")}
-              className={`py-2 px-4 rounded font-medium transition ${
-                view === "summary"
-                  ? "bg-blue-500 text-white"
-                  : "bg-gray-200 hover:bg-gray-300"
-              }`}
-            >
-              Weekly Summary
-            </button>
+            {isCommissioner && (
+              <button
+                onClick={() => setView("summary")}
+                className={`py-2 px-4 rounded font-medium transition ${
+                  view === "summary"
+                    ? "bg-blue-500 text-white"
+                    : "bg-gray-200 hover:bg-gray-300"
+                }`}
+              >
+                Weekly Recap
+              </button>
+            )}
             {isCommissioner && (
               <button
                 onClick={() => setView("members")}
@@ -2419,7 +2449,7 @@ export function App() {
         {!loading && view === "standings" && <StandingsScreen />}
         {!loading && view === "payouts" && <PayoutsScreen />}
         {!loading && view === "commissioner" && isCommissioner && <CommissionerDashboard />}
-        {!loading && view === "summary" && <WeeklySummary />}
+        {!loading && view === "summary" && isCommissioner && <WeeklySummary />}
         {!loading && view === "members" && isCommissioner && <MembersScreen />}
       </div>
     </div>
