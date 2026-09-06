@@ -933,7 +933,7 @@ export function StandingsScreen() {
               return (
                 <React.Fragment key={s.playerId}>
                   <tr className="bg-green-50">
-                    <td rowSpan={2} className="py-2 pr-3 font-bold text-lg sticky left-0 bg-green-50 align-top">
+                    <td className="py-2 pr-3 font-bold text-lg sticky left-0 bg-green-50">
                       {s.rank}
                     </td>
                     <td className="pt-2 pr-4 font-bold text-base sticky left-8 bg-green-50">
@@ -949,6 +949,7 @@ export function StandingsScreen() {
                     ))}
                   </tr>
                   <tr className="border-b-2 border-gray-200">
+                    <td className="pb-2 pr-3 sticky left-0 bg-white"></td>
                     <td className="pb-2 pr-4 text-xs text-gray-500 sticky left-8 bg-white">
                       {winnings > 0 ? `$${winnings.toLocaleString()} won` : ""}
                     </td>
