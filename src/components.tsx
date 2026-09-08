@@ -96,13 +96,15 @@ function PickTile({
     >
       {logoUrl && !logoFailed ? (
         <div className="flex flex-col items-center gap-1">
-          <img
-            src={logoUrl}
-            alt={getTeamDisplayName(abbr)}
-            className="w-16 h-16 object-contain"
-            style={{ filter: showColor ? "none" : "grayscale(1) opacity(0.6)" }}
-            onError={() => setLogoFailed(true)}
-          />
+          <div className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center p-1.5">
+            <img
+              src={logoUrl}
+              alt={getTeamDisplayName(abbr)}
+              className="w-full h-full object-contain"
+              style={{ filter: showColor ? "none" : "grayscale(1) opacity(0.6)" }}
+              onError={() => setLogoFailed(true)}
+            />
+          </div>
           <div className="text-xs font-medium opacity-90">{subtext}</div>
         </div>
       ) : (
@@ -323,6 +325,11 @@ export function PicksScreen() {
           >
             {picksMade} / {totalGames} picked
           </div>
+          {picksComplete && myTiebreakerGuess === null && (
+            <div className="text-xs font-bold px-2 py-1 rounded-full inline-block bg-amber-100 text-amber-700 mt-1">
+              ⚠ Tiebreaker not entered
+            </div>
+          )}
           <div className="text-xs text-gray-600 mt-1">
             {weeklyCorrect} correct · {weeklyPoints} pts so far this week
           </div>

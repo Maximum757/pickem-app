@@ -153,17 +153,16 @@ const ESPN_LOGO_CODE_OVERRIDES: Record<string, string> = {
   WAS: "wsh",
 };
 
-// Teams reported as not loading via the plain .../500/{code}.png path —
-// multiple real ESPN pages consistently reference these three specifically
-// through the "/scoreboard/" variant instead. Scoped narrowly to what was
-// actually confirmed broken rather than applied to every team, since the
-// base path is independently verified working for others (e.g. "dal").
-const ESPN_LOGO_SCOREBOARD_PATH_TEAMS = new Set(["NYG", "NYJ", "LAR"]);
-
+// A "/scoreboard/" path variant was tried here for NYG/NYJ/LAR based on
+// indirect search evidence — that turned out to be wrong. Real testing
+// showed those three loading as a flat, monotone, single-color image
+// matching the team's own primary color, invisible against a same-colored
+// tile — almost certainly the simplified ticker/scoreboard logo variant,
+// not the full detailed logo the other 29 teams get from the base path.
+// Reverted: every team now uses the same plain path.
 export function getTeamLogoUrl(abbr: string): string | null {
   if (!TEAM_FULL_NAMES[abbr]) return null; // not a known NFL code — e.g. a Week 0 college team
   const code = ESPN_LOGO_CODE_OVERRIDES[abbr] || abbr.toLowerCase();
-  const pathSegment = ESPN_LOGO_SCOREBOARD_PATH_TEAMS.has(abbr) ? "scoreboard/" : "";
-  return `https://a.espncdn.com/i/teamlogos/nfl/500/${pathSegment}${code}.png`;
+  return `https://a.espncdn.com/i/teamlogos/nfl/500/${code}.png`;
 }
 
