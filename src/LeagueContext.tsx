@@ -190,6 +190,20 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
   const [games, setGames] = useState<schema.UIGame[]>([]);
   const [standings, setStandings] = useState<schema.UIStanding[]>([]);
   const [currentWeek, setCurrentWeek] = useState(1);
+  // True only once the league doc's real currentWeek has actually loaded
+  // and been applied. Games/picks fetches wait on this specifically —
+  // currentWeek's hardcoded initial value of 1 was previously enough on
+  // its own to trigger a fetch, meaning a games/picks fetch could fire
+  // using that guess before the real value came back from Firestore. If
+  // that first fetch happened to run before the league doc resolved (a
+  // real possibility depending on network timing), whatever it fetched
+  // just sat there — nothing re-fetched afterward unless currentWeek's
+  // real value happened to differ from the guess, since React skips a
+  // state update (and any effect depending on it) when the new value
+  // matches the old one. Gating on this removes that whole class of race
+  // rather than relying on the guess and the real value happening to
+  // match.
+  const [leagueLoaded, setLeagueLoaded] = useState(false);
   const [userPicks, setUserPicks] = useState<{ [gameId: string]: string }>({});
   const [userPickResults, setUserPickResults] = useState<{
     [gameId: string]: { isCorrect?: boolean; pointsAwarded?: number };
@@ -234,6 +248,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
           // fights with someone manually browsing to a different week.
           setCurrentWeek(leagueData.currentWeek ?? 0);
         }
+        setLeagueLoaded(true);
 
         const playersData = await firebaseUtils.getPlayers(leagueId);
         setPlayers(playersData);
@@ -250,7 +265,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
 
   // Load games for current week
   useEffect(() => {
-    if (!leagueId || currentWeek == null) return;
+    if (!leagueId || !leagueLoaded || currentWeek == null) return;
 
     (async () => {
       setLoading(true);
@@ -262,11 +277,11 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
       }
     })();
-  }, [leagueId, currentWeek]);
+  }, [leagueId, leagueLoaded, currentWeek]);
 
   // Load user picks for current week
   useEffect(() => {
-    if (!leagueId || !playerId || currentWeek == null) return;
+    if (!leagueId || !leagueLoaded || !playerId || currentWeek == null) return;
 
     (async () => {
       try {
@@ -277,14 +292,14 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         setError(`Failed to load picks: ${err}`);
       }
     })();
-  }, [leagueId, playerId, currentWeek]);
+  }, [leagueId, leagueLoaded, playerId, currentWeek]);
 
   // Load this week's tiebreaker — question always, answer once the
   // commissioner has actually recorded it (previously withheld from
   // players entirely; now shown so anyone can verify the resolution
   // themselves once it's knowable).
   useEffect(() => {
-    if (!leagueId || !playerId || currentWeek == null) return;
+    if (!leagueId || !leagueLoaded || !playerId || currentWeek == null) return;
 
     (async () => {
       try {
@@ -303,13 +318,13 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         setError(`Failed to load tiebreaker: ${err}`);
       }
     })();
-  }, [leagueId, playerId, currentWeek]);
+  }, [leagueId, leagueLoaded, playerId, currentWeek]);
 
   // Load this week's public per-player point totals so the picks screen can
   // show a live "weekly leader" — the aggregate is public the same way
   // season standings are; it just never reveals what anyone actually picked.
   useEffect(() => {
-    if (!leagueId || currentWeek == null) return;
+    if (!leagueId || !leagueLoaded || currentWeek == null) return;
 
     (async () => {
       try {
@@ -332,7 +347,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         setWeeklyLeader(null);
       }
     })();
-  }, [leagueId, currentWeek]);
+  }, [leagueId, leagueLoaded, currentWeek]);
 
   // Actions
   const handleSubmitPicks = async (picks: Array<{ gameId: string; pickedTeam: string }>) => {
