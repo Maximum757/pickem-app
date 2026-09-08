@@ -109,7 +109,7 @@ function PickTile({
         </div>
       ) : (
         <>
-          <div className="font-bold">{getTeamDisplayName(abbr)}</div>
+          <div className="font-extrabold text-[15px] leading-tight">{getTeamDisplayName(abbr)}</div>
           <div className="text-xs font-medium opacity-90 mt-0.5">{subtext}</div>
         </>
       )}
