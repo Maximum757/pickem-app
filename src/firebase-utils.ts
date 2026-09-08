@@ -878,6 +878,46 @@ export async function setWeeklyTiebreakerAnswer(
 ): Promise<void> {
   const tiebreakerRef = doc(db, `leagues/${leagueId}/weeklyTiebreakers/${week}`);
   await updateDoc(tiebreakerRef, { answer });
+  await resolveTiebreakerWinner(leagueId, week);
+}
+
+/**
+ * Determines who actually won this week's tiebreaker and writes it onto
+ * the (openly-readable) tiebreaker doc — the actual resolution logic that
+ * was always described ("closest" or "closest without going over wins")
+ * but never implemented; weekly ties were just being split evenly instead
+ * of ever actually being broken. Requires commissioner-level access (needs
+ * every player's guess), so this only ever runs from setWeeklyTiebreakerAnswer,
+ * called by the commissioner.
+ */
+export async function resolveTiebreakerWinner(leagueId: string, week: number): Promise<void> {
+  const tiebreakerRef = doc(db, `leagues/${leagueId}/weeklyTiebreakers/${week}`);
+  const tbSnap = await getDoc(tiebreakerRef);
+  if (!tbSnap.exists()) return;
+  const tb = tbSnap.data() as schema.WeeklyTiebreakerDoc;
+  if (tb.answer === null) return; // nothing to resolve against yet
+
+  const guesses = await getAllTiebreakerGuessesForWeek(leagueId, week);
+  if (guesses.length === 0) return;
+
+  let winners: schema.TiebreakerGuessDoc[];
+  if (tb.rule === "closest_without_going_over") {
+    const notOver = guesses.filter((g) => g.guess <= tb.answer!);
+    if (notOver.length > 0) {
+      const maxGuess = Math.max(...notOver.map((g) => g.guess));
+      winners = notOver.filter((g) => g.guess === maxGuess);
+    } else {
+      // Everybody went over — closest-over wins, per the original rule.
+      const minOverDiff = Math.min(...guesses.map((g) => g.guess - tb.answer!));
+      winners = guesses.filter((g) => g.guess - tb.answer! === minOverDiff);
+    }
+  } else {
+    // "closest" — smallest absolute difference, either direction.
+    const minDiff = Math.min(...guesses.map((g) => Math.abs(g.guess - tb.answer!)));
+    winners = guesses.filter((g) => Math.abs(g.guess - tb.answer!) === minDiff);
+  }
+
+  await updateDoc(tiebreakerRef, { resolvedWinnerIds: winners.map((w) => w.playerId) });
 }
 
 /**

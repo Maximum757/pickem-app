@@ -227,6 +227,15 @@ export interface WeeklyTiebreakerDoc {
                     // backfills anyone missing a guess from their last one.
   enteredAt: Timestamp;
   enteredBy: string; // Commissioner ID
+  // Who actually won this week's tiebreaker, computed once the answer is
+  // recorded — see resolveTiebreakerWinner() in firebase-utils.ts. More
+  // than one id means a genuine unbreakable tie (identical guesses), which
+  // still splits the payout evenly; a single id is the normal case.
+  // Denormalized here (rather than computed on the fly by whoever's
+  // viewing standings) because regular players don't have read access to
+  // everyone's raw guesses — only the commissioner's own client, which
+  // already has that access, ever actually runs the resolution.
+  resolvedWinnerIds?: string[];
 }
 
 /**

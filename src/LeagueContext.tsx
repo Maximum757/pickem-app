@@ -19,6 +19,7 @@ interface LeagueContextType {
   userPickResults: { [gameId: string]: { isCorrect?: boolean; pointsAwarded?: number } };
   tiebreakerQuestion: string | null;
   tiebreakerRule: "closest" | "closest_without_going_over" | null;
+  tiebreakerAnswer: number | null;
   myTiebreakerGuess: number | null;
   weeklyLeader: { playerId: string; name: string; points: number } | null;
   leagueMaxWeeklyPoints: number | null;
@@ -197,6 +198,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
   const [tiebreakerRule, setTiebreakerRule] = useState<
     "closest" | "closest_without_going_over" | null
   >(null);
+  const [tiebreakerAnswer, setTiebreakerAnswerState] = useState<number | null>(null);
   const [weeklyLeader, setWeeklyLeader] = useState<
     { playerId: string; name: string; points: number } | null
   >(null);
@@ -276,8 +278,10 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     })();
   }, [leagueId, playerId, currentWeek]);
 
-  // Load this week's tiebreaker question (never the answer — players should
-  // never see what they're being scored against) and the player's own guess.
+  // Load this week's tiebreaker — question always, answer once the
+  // commissioner has actually recorded it (previously withheld from
+  // players entirely; now shown so anyone can verify the resolution
+  // themselves once it's knowable).
   useEffect(() => {
     if (!leagueId || !playerId || currentWeek == null) return;
 
@@ -287,6 +291,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         setTiebreakerQuestion(tb?.question ?? null);
         setTiebreakerLocked(tb?.locked ?? false);
         setTiebreakerRule(tb?.rule ?? null);
+        setTiebreakerAnswerState(tb?.answer ?? null);
 
         const myGuess = await firebaseUtils.getPlayerTiebreakerGuess(leagueId, playerId, currentWeek);
         setMyTiebreakerGuess(myGuess?.guess ?? null);
@@ -450,6 +455,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     if (!leagueId) return;
     try {
       await firebaseUtils.setWeeklyTiebreakerAnswer(leagueId, week, answer);
+      if (week === currentWeek) setTiebreakerAnswerState(answer);
     } catch (err) {
       setError(`Failed to record tiebreaker answer: ${err}`);
     }
@@ -679,6 +685,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         userPickResults,
         tiebreakerQuestion,
         tiebreakerRule,
+        tiebreakerAnswer,
         tiebreakerLocked,
         myTiebreakerGuess,
         weeklyLeader,

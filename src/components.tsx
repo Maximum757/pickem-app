@@ -222,6 +222,7 @@ export function PicksScreen() {
     submitSinglePick,
     tiebreakerQuestion,
     tiebreakerRule,
+    tiebreakerAnswer,
     tiebreakerLocked,
     myTiebreakerGuess,
     submitMyTiebreakerGuess,
@@ -356,10 +357,15 @@ export function PicksScreen() {
           )}
         </div>
         {tiebreakerRule && (
-          <div className="text-xs text-gray-500 mb-3">
+          <div className="text-xs text-gray-500 mb-1">
             {tiebreakerRule === "closest_without_going_over"
               ? "Price Is Right rules: closest without going over wins"
               : "Closest guess wins (going over is fine)"}
+          </div>
+        )}
+        {tiebreakerAnswer !== null && (
+          <div className="text-xs font-bold text-green-700 mb-3">
+            Correct answer: {tiebreakerAnswer}
           </div>
         )}
         <div className="flex items-center gap-2">
@@ -802,6 +808,9 @@ export function StandingsScreen() {
   const { leagueId, playerId, standings, league, loading } = useLeague();
   const [allGames, setAllGames] = useState<schema.GameDoc[]>([]);
   const [allPicks, setAllPicks] = useState<schema.PickDoc[]>([]);
+  const [tiebreakersByWeek, setTiebreakersByWeek] = useState<
+    Map<number, schema.WeeklyTiebreakerDoc>
+  >(new Map());
   const [loadingGrid, setLoadingGrid] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -822,10 +831,19 @@ export function StandingsScreen() {
         // this replaced an earlier version that (still incorrectly)
         // assumed a broad query plus a "simple" rule condition would work.
         const weeksInLeague = Array.from(new Set(gamesData.map((g) => g.week))).sort((a, b) => a - b);
-        const picksByWeek = await Promise.all(
-          weeksInLeague.map((w) => firebaseUtils.getVisiblePicksForWeek(leagueId, w, playerId))
-        );
+        const [picksByWeek, tiebreakerDocs] = await Promise.all([
+          Promise.all(weeksInLeague.map((w) => firebaseUtils.getVisiblePicksForWeek(leagueId, w, playerId))),
+          // weeklyTiebreakers is openly readable — no special query pattern
+          // needed here, unlike picks.
+          Promise.all(weeksInLeague.map((w) => firebaseUtils.getWeeklyTiebreaker(leagueId, w))),
+        ]);
         setAllPicks(picksByWeek.flat());
+        const tbMap = new Map<number, schema.WeeklyTiebreakerDoc>();
+        weeksInLeague.forEach((w, i) => {
+          const tb = tiebreakerDocs[i];
+          if (tb) tbMap.set(w, tb);
+        });
+        setTiebreakersByWeek(tbMap);
       } catch (err) {
         setLoadError(`Failed to load standings: ${err}`);
       } finally {
@@ -865,11 +883,12 @@ export function StandingsScreen() {
     }
   });
 
-  // Weekly winnings: for each week, whoever had the most points that week
-  // splits that week's payout evenly (a genuine tie is realistic in a
-  // contrarian pool). Only counted once every game in that week is final —
-  // showing a leader's winnings while the week's still in progress would
-  // imply someone's "won" money that's still entirely up in the air.
+  // Weekly winnings: whoever had the most points that week wins the
+  // payout. A genuine points TIE gets broken by that week's tiebreaker —
+  // only if the tiebreaker hasn't actually been resolved yet (no answer
+  // recorded) does it fall back to an even split, and even then only
+  // among players who are BOTH tied on points AND (if they guessed)
+  // matched by the tiebreaker's own resolution.
   const weeklyWinningsByPlayer = new Map<string, number>();
   if (league?.weeklyPayout) {
     weeks.forEach((w) => {
@@ -889,12 +908,27 @@ export function StandingsScreen() {
           leaders.push(playerId);
         }
       });
-      if (maxPts > 0 && leaders.length > 0) {
-        const share = league.weeklyPayout! / leaders.length;
-        leaders.forEach((playerId) => {
-          weeklyWinningsByPlayer.set(playerId, (weeklyWinningsByPlayer.get(playerId) || 0) + share);
-        });
+      if (maxPts === 0 || leaders.length === 0) return;
+
+      let payoutTo = leaders;
+      if (leaders.length > 1) {
+        const tb = tiebreakersByWeek.get(w);
+        const resolved = tb?.resolvedWinnerIds;
+        if (resolved && resolved.length > 0) {
+          // Only trust the resolution for players actually tied on points —
+          // resolvedWinnerIds could in principle include someone outside
+          // this particular points-tie if the tiebreaker doc's stale.
+          const stillTied = resolved.filter((id) => leaders.includes(id));
+          if (stillTied.length > 0) payoutTo = stillTied;
+        }
+        // No recorded/resolved tiebreaker for this week — fall back to
+        // splitting evenly among the points-tied leaders, same as before.
       }
+
+      const share = league.weeklyPayout! / payoutTo.length;
+      payoutTo.forEach((pid) => {
+        weeklyWinningsByPlayer.set(pid, (weeklyWinningsByPlayer.get(pid) || 0) + share);
+      });
     });
   }
 
@@ -912,6 +946,19 @@ export function StandingsScreen() {
 
   const totalWinnings = (playerId: string) =>
     (weeklyWinningsByPlayer.get(playerId) || 0) + (seasonWinningsByPlayer.get(playerId) || 0);
+
+  // The raw weekly-high score per week, regardless of tiebreaker resolution —
+  // this is a "who scored the most this week" visual, separate from (and
+  // simpler than) the $ payout logic above, which can differ in a genuine tie.
+  const maxPointsByWeek = new Map<number, number>();
+  weeks.forEach((w) => {
+    let max = 0;
+    pointsByPlayerWeek.forEach((weekMap) => {
+      const pts = weekMap.get(w);
+      if (pts !== undefined && pts > max) max = pts;
+    });
+    if (max > 0) maxPointsByWeek.set(w, max);
+  });
 
   return (
     <div className="p-4">
@@ -954,11 +1001,20 @@ export function StandingsScreen() {
                     <td className="text-center pt-2 px-3 font-bold text-lg border-l-2 border-r-2">
                       {s.totalPoints}
                     </td>
-                    {weeks.map((w) => (
-                      <td key={w} className="text-right pt-2 px-2 font-semibold">
-                        {weekMap?.get(w) !== undefined ? weekMap.get(w) : "—"}
-                      </td>
-                    ))}
+                    {weeks.map((w) => {
+                      const pts = weekMap?.get(w);
+                      const isWeeklyHigh = pts !== undefined && pts > 0 && pts === maxPointsByWeek.get(w);
+                      return (
+                        <td
+                          key={w}
+                          className={`text-right pt-2 px-2 font-semibold ${
+                            isWeeklyHigh ? "bg-yellow-100 text-yellow-800 rounded" : ""
+                          }`}
+                        >
+                          {pts !== undefined ? pts : "—"}
+                        </td>
+                      );
+                    })}
                   </tr>
                   <tr className="border-b-2 border-gray-200">
                     <td className="pb-2 pr-3 sticky left-0 bg-white"></td>
