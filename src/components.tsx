@@ -192,7 +192,6 @@ function WeekSelector({
         onChange={(e) => onChange(parseInt(e.target.value))}
         className="border rounded px-2 py-1 text-sm font-semibold"
       >
-        <option value={0}>Week 0 (test)</option>
         {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
           <option key={w} value={w}>
             Week {w}
@@ -511,9 +510,11 @@ export function MySummaryScreen() {
   if (loading || loadingSummary) return <div className="p-4">Loading...</div>;
 
   // Group games by week, sorted by that week's display order — this is
-  // what makes each column's row order match the picks screen.
+  // what makes each column's row order match the picks screen. Week 0 (the
+  // test slate) is excluded here too — same reasoning as everywhere else.
   const gamesByWeek = new Map<number, schema.UIGame[]>();
   allGames.forEach((g) => {
+    if (g.week === 0) return;
     if (!gamesByWeek.has(g.week)) gamesByWeek.set(g.week, []);
     gamesByWeek.get(g.week)!.push(g);
   });
@@ -836,7 +837,13 @@ export function StandingsScreen() {
   if (loading || loadingGrid) return <div className="p-4">Loading...</div>;
   if (loadError) return <div className="p-4 text-red-600 text-sm">{loadError}</div>;
 
-  const weeks = Array.from(new Set(allGames.map((g) => g.week))).sort((a, b) => a - b);
+  // Week 0 was the test slate — excluded from the real standings grid, same
+  // as it's excluded from the real season point totals (see
+  // recalculateSeasonStandings in firebase-utils.ts). Data stays in
+  // Firestore either way, just not shown here anymore.
+  const weeks = Array.from(new Set(allGames.map((g) => g.week)))
+    .filter((w) => w > 0)
+    .sort((a, b) => a - b);
 
   // Points AND correct-picks-count per player per week, from whatever picks
   // are actually visible to this viewer (their own always; others' only

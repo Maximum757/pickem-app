@@ -721,6 +721,10 @@ export async function recalculateSeasonStandings(leagueId: string): Promise<void
   });
 
   allPicks.forEach((pick) => {
+    // Week 0 was the test slate — real money and real standings shouldn't
+    // include it. Its data stays in Firestore (nothing here deletes
+    // anything), it's just excluded from the real season's totals.
+    if (pick.week === 0) return;
     const stats = playerStats.get(pick.playerId);
     if (stats && pick.pointsAwarded !== undefined) {
       stats.totalPoints += pick.pointsAwarded;

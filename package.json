@@ -16,7 +16,8 @@
     "refresh:spreads": "tsc -p tsconfig.refresh-spreads.json && cp dist-engine-package.json dist-refresh-spreads/package.json && node --env-file=.env.local dist-refresh-spreads/refresh-spreads.js",
     "lock:passed-games": "tsc -p tsconfig.lock-passed-games.json && cp dist-engine-package.json dist-lock-passed-games/package.json && node --env-file=.env.local dist-lock-passed-games/lock-passed-games.js",
     "backfill:visibility": "tsc -p tsconfig.backfill-visibility.json && cp dist-engine-package.json dist-backfill-visibility/package.json && node --env-file=.env.local dist-backfill-visibility/backfill-visibility.js",
-    "patch:week0-times": "tsc -p tsconfig.patch-week0-times.json && cp dist-engine-package.json dist-patch-week0-times/package.json && node --env-file=.env.local dist-patch-week0-times/patch-week0-times.js"
+    "patch:week0-times": "tsc -p tsconfig.patch-week0-times.json && cp dist-engine-package.json dist-patch-week0-times/package.json && node --env-file=.env.local dist-patch-week0-times/patch-week0-times.js",
+    "refresh:standings": "tsc -p tsconfig.refresh-standings.json && cp dist-engine-package.json dist-refresh-standings/package.json && node --env-file=.env.local dist-refresh-standings/refresh-standings.js"
   },
   "dependencies": {
     "cheerio": "^1.2.0",
