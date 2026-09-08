@@ -1005,6 +1005,11 @@ export async function setLeagueMaxPlayers(leagueId: string, maxPlayers: number |
   await updateDoc(leagueRef, { maxPlayers });
 }
 
+export async function setLeagueName(leagueId: string, name: string): Promise<void> {
+  const leagueRef = doc(db, "leagues", leagueId);
+  await updateDoc(leagueRef, { name });
+}
+
 /**
  * Commissioner sets the dues/payout structure. All amounts are entered
  * directly rather than computed from player count — deliberately flexible

@@ -39,6 +39,7 @@ interface LeagueContextType {
   removePlayer: (playerId: string) => Promise<void>;
   restorePlayer: (playerId: string) => Promise<void>;
   setLeagueMaxPlayers: (maxPlayers: number | null) => Promise<void>;
+  setLeagueName: (name: string) => Promise<void>;
   setLeaguePayoutSettings: (settings: {
     entryFee: number | null;
     weeklyPayout: number | null;
@@ -603,6 +604,16 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const handleSetLeagueName = async (name: string) => {
+    if (!leagueId) return;
+    try {
+      await firebaseUtils.setLeagueName(leagueId, name);
+      setLeague((prev) => (prev ? { ...prev, name } : prev));
+    } catch (err) {
+      setError(`Failed to update league name: ${err}`);
+    }
+  };
+
   const handleSetLeaguePayoutSettings = async (settings: {
     entryFee: number | null;
     weeklyPayout: number | null;
@@ -707,6 +718,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         removePlayer: handleRemovePlayer,
         restorePlayer: handleRestorePlayer,
         setLeagueMaxPlayers: handleSetLeagueMaxPlayers,
+        setLeagueName: handleSetLeagueName,
         setLeaguePayoutSettings: handleSetLeaguePayoutSettings,
         myWeekLocked,
         setMyWeekLocked: handleSetMyWeekLocked,

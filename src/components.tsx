@@ -1217,10 +1217,12 @@ export function CommissionerDashboard() {
     unlockTiebreaker,
     assignMissedPick,
     setLeagueMaxPlayers,
+    setLeagueName,
     lockAllPassedKickoffGames,
   } = useLeague();
   const now = useNow();
   const [maxPlayersDraft, setMaxPlayersDraft] = useState<string>("");
+  const [leagueNameDraft, setLeagueNameDraft] = useState<string>("");
   const [lockingAll, setLockingAll] = useState(false);
   const [lastLockResult, setLastLockResult] = useState<string | null>(null);
   const [editingResultGameId, setEditingResultGameId] = useState<string | null>(null);
@@ -1379,6 +1381,27 @@ export function CommissionerDashboard() {
       {/* League Settings */}
       <div className="mb-6 border p-4 rounded bg-gray-50">
         <h3 className="text-sm font-bold mb-2">League Settings</h3>
+        <div className="flex items-center gap-2 mb-3">
+          <label className="text-xs text-gray-600">League name:</label>
+          <input
+            type="text"
+            placeholder={league?.name || "League name"}
+            value={leagueNameDraft}
+            onChange={(e) => setLeagueNameDraft(e.target.value)}
+            className="flex-1 border p-1.5 rounded text-sm"
+          />
+          <button
+            onClick={() => {
+              if (leagueNameDraft.trim()) {
+                setLeagueName(leagueNameDraft.trim());
+                setLeagueNameDraft("");
+              }
+            }}
+            className="text-xs font-semibold text-white bg-blue-500 hover:bg-blue-600 px-3 py-1.5 rounded"
+          >
+            Save
+          </button>
+        </div>
         <div className="flex items-center gap-2">
           <label className="text-xs text-gray-600">Signup cap:</label>
           <input
