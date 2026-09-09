@@ -39,7 +39,7 @@ export function AuthScreen() {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        <h1 className="text-2xl font-bold mb-1 text-center">Week 0 Test</h1>
+        <h1 className="text-2xl font-bold mb-1 text-center">Game-Theory NFL Pick 'em</h1>
         <p className="text-sm text-gray-600 mb-6 text-center">
           {mode === "signup" ? "Create your account to pick this week's games" : "Sign in to your account"}
         </p>
