@@ -2418,14 +2418,27 @@ export function MembersScreen() {
 }
 
 export function App() {
-  const { leagueId, playerId, league, players, loading, error, isCommissioner, updateMyName } = useLeague();
+  const { leagueId, playerId, league, players, loading, error, isCommissioner, updateMyName, updatePlayerPhone } =
+    useLeague();
   const { signOut } = useAuth();
   const [view, setView] = useState<ViewType>("picks");
 
   const myName = players.find((p) => p.id === playerId)?.name || "Signed in";
   const myEmail = players.find((p) => p.id === playerId)?.email || "";
+  const myPhone = players.find((p) => p.id === playerId)?.phone || "";
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
+  const [editingPhone, setEditingPhone] = useState(false);
+  const [phoneDraft, setPhoneDraft] = useState("");
+
+  const startEditingMyPhone = () => {
+    setPhoneDraft(myPhone);
+    setEditingPhone(true);
+  };
+  const saveMyPhone = () => {
+    if (playerId) updatePlayerPhone(playerId, phoneDraft.trim());
+    setEditingPhone(false);
+  };
 
   const startEditingName = () => {
     setNameDraft(myName);
@@ -2499,6 +2512,34 @@ export function App() {
                   </button>
                 )}
                 {myEmail && <div className="text-xs text-gray-500">{myEmail}</div>}
+                {editingPhone ? (
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <input
+                      type="tel"
+                      value={phoneDraft}
+                      onChange={(e) => setPhoneDraft(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && saveMyPhone()}
+                      placeholder="(555) 555-5555"
+                      autoFocus
+                      className="text-xs border rounded px-2 py-1 w-32"
+                    />
+                    <button onClick={saveMyPhone} className="text-xs font-semibold text-green-600">
+                      Save
+                    </button>
+                    <button onClick={() => setEditingPhone(false)} className="text-xs text-gray-400">
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={startEditingMyPhone}
+                    className="text-xs text-gray-500 hover:underline block"
+                    title="Click to add/edit your phone number"
+                  >
+                    {myPhone || <span className="text-gray-400 italic">Add phone number</span>}
+                    {myPhone && <span className="text-gray-400"> ✎</span>}
+                  </button>
+                )}
                 {isCommissioner && (
                   <div className="text-xs font-medium text-blue-600">Commissioner</div>
                 )}
