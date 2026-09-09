@@ -81,24 +81,6 @@ export function AuthScreen() {
             </div>
           )}
 
-          {mode === "signup" && (
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
-                Phone number <span className="text-gray-400 font-normal">(optional)</span>
-              </label>
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="(555) 555-5555"
-                className="w-full border p-2 rounded"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Only used to reach you if you miss a pick deadline — never required.
-              </p>
-            </div>
-          )}
-
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
             <input
@@ -121,6 +103,24 @@ export function AuthScreen() {
               className="w-full border p-2 rounded"
             />
           </div>
+
+          {mode === "signup" && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Phone number <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="(555) 555-5555"
+                className="w-full border p-2 rounded"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Only used to reach you if you miss a pick deadline — never required.
+              </p>
+            </div>
+          )}
 
           {authError && (
             <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
