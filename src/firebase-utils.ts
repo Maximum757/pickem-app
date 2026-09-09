@@ -1011,22 +1011,47 @@ export async function setLeagueName(leagueId: string, name: string): Promise<voi
 }
 
 /**
- * Commissioner sets the dues/payout structure. All amounts are entered
- * directly rather than computed from player count — deliberately flexible
- * so the commissioner can adjust as roster size firms up, rather than the
- * app guessing a scaling formula. seasonPayouts is always exactly 5 entries
- * (1st-5th); any entry can be 0/null if the league doesn't pay that deep.
+ * Commissioner sets the regular-season dues/payout structure. All amounts
+ * are entered directly rather than computed from player count —
+ * deliberately flexible so the commissioner can adjust as roster size
+ * firms up, rather than the app guessing a scaling formula. payouts is
+ * always exactly 5 entries (1st-5th); any entry can be 0/null if the
+ * league doesn't pay that deep.
  */
-export async function setLeaguePayoutSettings(
+export async function setRegularSeasonPayoutSettings(
   leagueId: string,
   settings: {
     entryFee: number | null;
     weeklyPayout: number | null;
-    seasonPayouts: (number | null)[];
+    payouts: (number | null)[];
   }
 ): Promise<void> {
   const leagueRef = doc(db, "leagues", leagueId);
-  await updateDoc(leagueRef, settings);
+  await updateDoc(leagueRef, {
+    regularSeasonEntryFee: settings.entryFee,
+    regularSeasonWeeklyPayout: settings.weeklyPayout,
+    regularSeasonPayouts: settings.payouts,
+  });
+}
+
+/**
+ * Same idea, for the playoff pool — a genuinely separate entry fee and
+ * prize structure from the regular season, not a split of one combined
+ * number. Playoff scoring itself isn't built yet; this is just the
+ * payout/bookkeeping side.
+ */
+export async function setPlayoffPayoutSettings(
+  leagueId: string,
+  settings: {
+    entryFee: number | null;
+    payouts: (number | null)[];
+  }
+): Promise<void> {
+  const leagueRef = doc(db, "leagues", leagueId);
+  await updateDoc(leagueRef, {
+    playoffEntryFee: settings.entryFee,
+    playoffPayouts: settings.payouts,
+  });
 }
 
 /**

@@ -32,15 +32,22 @@ export interface LeagueDoc {
                                // means no cap. Enforced client-side at signup
                                // (see AuthContext.signUp) — not a hard server-side
                                // guarantee; see the note in that function.
-  entryFee?: number | null; // Dues per player — informational, paired with
-                             // each player's own hasPaid flag for tracking.
-  weeklyPayout?: number | null; // $ awarded to that week's points leader.
-  seasonPayouts?: (number | null)[]; // 1st through 5th place, in order —
-                                      // commissioner-editable, any entry can
-                                      // be 0 if the league doesn't pay that
-                                      // deep. Playoff-portion payouts are a
-                                      // deliberately separate, not-yet-built
-                                      // feature — see product notes.
+  // Regular season and playoffs are genuinely separate pools — separate
+  // entry fees, separate prize structures — not one combined number split
+  // visually. Standings' weekly/season winnings only ever draw from the
+  // regularSeason* fields; playoff scoring itself isn't built yet (a
+  // deliberately deferred, separate feature), this is just the payout
+  // structure/bookkeeping side of it.
+  regularSeasonEntryFee?: number | null;
+  regularSeasonWeeklyPayout?: number | null; // $ awarded to that week's points leader.
+  regularSeasonPayouts?: (number | null)[]; // 1st through 5th place, in order —
+                                             // any entry can be 0/null if the
+                                             // league doesn't pay that deep.
+  playoffEntryFee?: number | null;
+  playoffPayouts?: (number | null)[]; // Same 1st-5th shape as regular season,
+                                       // for now — adjust if the real playoff
+                                       // structure ends up different (e.g.
+                                       // bracket-based) once that's built.
   currentWeek: number; // The week players/commissioner see by default on open.
                         // Advanced explicitly by the commissioner (setLeagueCurrentWeek) —
                         // not inferred from wall-clock time, since bye weeks and a
@@ -422,9 +429,11 @@ export interface UILeague {
   season: number;
   playerCount: number;
   maxPlayers?: number | null;
-  entryFee?: number | null;
-  weeklyPayout?: number | null;
-  seasonPayouts?: (number | null)[];
+  regularSeasonEntryFee?: number | null;
+  regularSeasonWeeklyPayout?: number | null;
+  regularSeasonPayouts?: (number | null)[];
+  playoffEntryFee?: number | null;
+  playoffPayouts?: (number | null)[];
   commissionerId: string;
   currentWeek: number;
 }

@@ -40,10 +40,14 @@ interface LeagueContextType {
   restorePlayer: (playerId: string) => Promise<void>;
   setLeagueMaxPlayers: (maxPlayers: number | null) => Promise<void>;
   setLeagueName: (name: string) => Promise<void>;
-  setLeaguePayoutSettings: (settings: {
+  setRegularSeasonPayoutSettings: (settings: {
     entryFee: number | null;
     weeklyPayout: number | null;
-    seasonPayouts: (number | null)[];
+    payouts: (number | null)[];
+  }) => Promise<void>;
+  setPlayoffPayoutSettings: (settings: {
+    entryFee: number | null;
+    payouts: (number | null)[];
   }) => Promise<void>;
   myWeekLocked: boolean;
   setMyWeekLocked: (locked: boolean) => Promise<void>;
@@ -237,9 +241,11 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
             season: leagueData.season,
             playerCount: leagueData.playerCount,
             maxPlayers: leagueData.maxPlayers ?? null,
-            entryFee: leagueData.entryFee ?? null,
-            weeklyPayout: leagueData.weeklyPayout ?? null,
-            seasonPayouts: leagueData.seasonPayouts ?? [null, null, null, null, null],
+            regularSeasonEntryFee: leagueData.regularSeasonEntryFee ?? null,
+            regularSeasonWeeklyPayout: leagueData.regularSeasonWeeklyPayout ?? null,
+            regularSeasonPayouts: leagueData.regularSeasonPayouts ?? [null, null, null, null, null],
+            playoffEntryFee: leagueData.playoffEntryFee ?? null,
+            playoffPayouts: leagueData.playoffPayouts ?? [null, null, null, null, null],
             commissionerId: leagueData.commissionerId,
             currentWeek: leagueData.currentWeek,
           });
@@ -629,17 +635,43 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const handleSetLeaguePayoutSettings = async (settings: {
+  const handleSetRegularSeasonPayoutSettings = async (settings: {
     entryFee: number | null;
     weeklyPayout: number | null;
-    seasonPayouts: (number | null)[];
+    payouts: (number | null)[];
   }) => {
     if (!leagueId) return;
     try {
-      await firebaseUtils.setLeaguePayoutSettings(leagueId, settings);
-      setLeague((prev) => (prev ? { ...prev, ...settings } : prev));
+      await firebaseUtils.setRegularSeasonPayoutSettings(leagueId, settings);
+      setLeague((prev) =>
+        prev
+          ? {
+              ...prev,
+              regularSeasonEntryFee: settings.entryFee,
+              regularSeasonWeeklyPayout: settings.weeklyPayout,
+              regularSeasonPayouts: settings.payouts,
+            }
+          : prev
+      );
     } catch (err) {
-      setError(`Failed to update payout settings: ${err}`);
+      setError(`Failed to update regular season payout settings: ${err}`);
+    }
+  };
+
+  const handleSetPlayoffPayoutSettings = async (settings: {
+    entryFee: number | null;
+    payouts: (number | null)[];
+  }) => {
+    if (!leagueId) return;
+    try {
+      await firebaseUtils.setPlayoffPayoutSettings(leagueId, settings);
+      setLeague((prev) =>
+        prev
+          ? { ...prev, playoffEntryFee: settings.entryFee, playoffPayouts: settings.payouts }
+          : prev
+      );
+    } catch (err) {
+      setError(`Failed to update playoff payout settings: ${err}`);
     }
   };
 
@@ -734,7 +766,8 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         restorePlayer: handleRestorePlayer,
         setLeagueMaxPlayers: handleSetLeagueMaxPlayers,
         setLeagueName: handleSetLeagueName,
-        setLeaguePayoutSettings: handleSetLeaguePayoutSettings,
+        setRegularSeasonPayoutSettings: handleSetRegularSeasonPayoutSettings,
+        setPlayoffPayoutSettings: handleSetPlayoffPayoutSettings,
         myWeekLocked,
         setMyWeekLocked: handleSetMyWeekLocked,
         submitPicks: handleSubmitPicks,

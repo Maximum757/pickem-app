@@ -629,35 +629,53 @@ export function MySummaryScreen() {
 // the regular-season dues/weekly/season structure.
 // ============================================================================
 
-export function PayoutsScreen() {
-  const { league, players, isCommissioner, setLeaguePayoutSettings } = useLeague();
+// One entry/prize pool's editable card — used twice (regular season and
+// playoffs), which are genuinely separate pools with their own entry fee
+// and prize structure, not one combined number split visually.
+function PayoutPoolCard({
+  title,
+  isCommissioner,
+  entryFee,
+  weeklyPayout, // null/undefined means this pool has no weekly component (playoffs)
+  payouts,
+  activeCount,
+  totalWeeks,
+  onSave,
+}: {
+  title: string;
+  isCommissioner: boolean;
+  entryFee: number | null;
+  weeklyPayout?: number | null;
+  payouts: (number | null)[];
+  activeCount: number;
+  totalWeeks?: number; // only relevant if weeklyPayout is used
+  onSave: (settings: { entryFee: number | null; weeklyPayout?: number | null; payouts: (number | null)[] }) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [entryFeeDraft, setEntryFeeDraft] = useState("");
   const [weeklyDraft, setWeeklyDraft] = useState("");
-  const [seasonDrafts, setSeasonDrafts] = useState<string[]>(["", "", "", "", ""]);
-
-  const activeCount = players.filter((p) => !p.removedFromLeague).length;
-  const entryFee = league?.entryFee ?? null;
-  const weeklyPayout = league?.weeklyPayout ?? null;
-  const seasonPayouts = league?.seasonPayouts ?? [null, null, null, null, null];
+  const [payoutDrafts, setPayoutDrafts] = useState<string[]>(["", "", "", "", ""]);
 
   const totalPot = entryFee !== null ? entryFee * activeCount : null;
-  const totalWeeklyCommitment = weeklyPayout !== null ? weeklyPayout * 18 : 0;
-  const totalSeasonCommitment = seasonPayouts.reduce((sum: number, p) => sum + (p || 0), 0);
-  const totalCommitted = totalWeeklyCommitment + totalSeasonCommitment;
+  const totalWeeklyCommitment =
+    weeklyPayout !== undefined && weeklyPayout !== null && totalWeeks ? weeklyPayout * totalWeeks : 0;
+  const totalPayoutCommitment = payouts.reduce((sum: number, p) => sum + (p || 0), 0);
+  const totalCommitted = totalWeeklyCommitment + totalPayoutCommitment;
 
   const startEditing = () => {
     setEntryFeeDraft(entryFee !== null ? String(entryFee) : "");
-    setWeeklyDraft(weeklyPayout !== null ? String(weeklyPayout) : "");
-    setSeasonDrafts(seasonPayouts.map((p) => (p !== null ? String(p) : "")));
+    setWeeklyDraft(weeklyPayout !== null && weeklyPayout !== undefined ? String(weeklyPayout) : "");
+    setPayoutDrafts(payouts.map((p) => (p !== null ? String(p) : "")));
     setEditing(true);
   };
 
   const save = () => {
-    setLeaguePayoutSettings({
+    onSave({
       entryFee: entryFeeDraft ? parseFloat(entryFeeDraft) : null,
-      weeklyPayout: weeklyDraft ? parseFloat(weeklyDraft) : null,
-      seasonPayouts: seasonDrafts.map((d) => (d ? parseFloat(d) : null)),
+      ...(weeklyPayout !== undefined
+        ? { weeklyPayout: weeklyDraft ? parseFloat(weeklyDraft) : null }
+        : {}),
+      payouts: payoutDrafts.map((d) => (d ? parseFloat(d) : null)),
     });
     setEditing(false);
   };
@@ -665,25 +683,18 @@ export function PayoutsScreen() {
   const placeLabels = ["1st", "2nd", "3rd", "4th", "5th"];
 
   return (
-    <div className="p-4 max-w-xl">
-      <div className="flex items-center justify-between mb-1">
-        <h2 className="text-2xl font-bold">Payouts</h2>
+    <div className="border rounded-lg p-4 bg-white">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-lg font-bold">{title}</h3>
         {isCommissioner && !editing && (
-          <button
-            onClick={startEditing}
-            className="text-xs font-semibold text-blue-600 hover:underline"
-          >
+          <button onClick={startEditing} className="text-xs font-semibold text-blue-600 hover:underline">
             Edit
           </button>
         )}
       </div>
-      <p className="text-sm text-gray-600 mb-4">
-        Dues, weekly prize, and season-long payouts. Playoff buy-in and payouts
-        aren't set up yet — coming later.
-      </p>
 
       {editing ? (
-        <div className="space-y-4 border rounded p-4 bg-gray-50">
+        <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1">Entry fee (per player)</label>
             <input
@@ -694,29 +705,31 @@ export function PayoutsScreen() {
               className="w-32 border p-2 rounded text-sm"
             />
           </div>
+          {weeklyPayout !== undefined && (
+            <div>
+              <label className="block text-sm font-medium mb-1">Weekly payout (to that week's leader)</label>
+              <input
+                type="number"
+                value={weeklyDraft}
+                onChange={(e) => setWeeklyDraft(e.target.value)}
+                placeholder="e.g. 100"
+                className="w-32 border p-2 rounded text-sm"
+              />
+            </div>
+          )}
           <div>
-            <label className="block text-sm font-medium mb-1">Weekly payout (to that week's leader)</label>
-            <input
-              type="number"
-              value={weeklyDraft}
-              onChange={(e) => setWeeklyDraft(e.target.value)}
-              placeholder="e.g. 100"
-              className="w-32 border p-2 rounded text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-2">Season-long payouts</label>
+            <label className="block text-sm font-medium mb-2">Payouts</label>
             <div className="space-y-2">
               {placeLabels.map((label, i) => (
                 <div key={label} className="flex items-center gap-2">
                   <span className="text-sm text-gray-600 w-10">{label}</span>
                   <input
                     type="number"
-                    value={seasonDrafts[i]}
+                    value={payoutDrafts[i]}
                     onChange={(e) => {
-                      const next = [...seasonDrafts];
+                      const next = [...payoutDrafts];
                       next[i] = e.target.value;
-                      setSeasonDrafts(next);
+                      setPayoutDrafts(next);
                     }}
                     placeholder="0"
                     className="w-32 border p-2 rounded text-sm"
@@ -732,65 +745,50 @@ export function PayoutsScreen() {
             >
               Save
             </button>
-            <button
-              onClick={() => setEditing(false)}
-              className="text-sm text-gray-500 px-2"
-            >
+            <button onClick={() => setEditing(false)} className="text-sm text-gray-500 px-2">
               Cancel
             </button>
           </div>
         </div>
       ) : (
-        <div className="space-y-4">
-          <div className="border rounded p-4 bg-white">
-            <div className="text-xs uppercase tracking-wide text-gray-500 font-semibold mb-2">
-              Dues
-            </div>
+        <div className="space-y-3">
+          <div className="text-sm">
             {entryFee !== null ? (
-              <div className="text-sm">
-                ${entryFee} × {activeCount} players ={" "}
-                <span className="font-bold">${totalPot} total pot</span>
-              </div>
+              <>
+                ${entryFee} × {activeCount} players = <span className="font-bold">${totalPot} total pot</span>
+              </>
             ) : (
-              <p className="text-sm text-gray-500">Not set yet.</p>
+              <span className="text-gray-500">Entry fee not set yet.</span>
             )}
           </div>
 
-          <div className="border rounded p-4 bg-white">
-            <div className="text-xs uppercase tracking-wide text-gray-500 font-semibold mb-2">
-              Weekly Payout
+          {weeklyPayout !== undefined && (
+            <div className="text-sm">
+              {weeklyPayout !== null ? (
+                <>${weeklyPayout} to that week's points leader, every week</>
+              ) : (
+                <span className="text-gray-500">Weekly payout not set yet.</span>
+              )}
             </div>
-            {weeklyPayout !== null ? (
-              <div className="text-sm">
-                ${weeklyPayout} to that week's points leader, every week
-              </div>
-            ) : (
-              <p className="text-sm text-gray-500">Not set yet.</p>
-            )}
-          </div>
+          )}
 
-          <div className="border rounded p-4 bg-white">
-            <div className="text-xs uppercase tracking-wide text-gray-500 font-semibold mb-2">
-              Season-Long Payouts
-            </div>
-            <div className="space-y-1">
-              {placeLabels.map((label, i) => (
-                <div key={label} className="flex justify-between text-sm">
-                  <span className="text-gray-600">{label}</span>
-                  <span className="font-semibold">${seasonPayouts[i] || 0}</span>
-                </div>
-              ))}
-            </div>
+          <div className="space-y-1">
+            {placeLabels.map((label, i) => (
+              <div key={label} className="flex justify-between text-sm">
+                <span className="text-gray-600">{label}</span>
+                <span className="font-semibold">${payouts[i] || 0}</span>
+              </div>
+            ))}
           </div>
 
           {totalPot !== null && (
             <div
-              className={`border rounded p-4 text-sm ${
+              className={`border rounded p-3 text-xs ${
                 totalCommitted > totalPot ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200"
               }`}
             >
               <div className="flex justify-between font-semibold">
-                <span>Total committed (weekly × 18 + season)</span>
+                <span>Total committed</span>
                 <span>${totalCommitted}</span>
               </div>
               <div className="flex justify-between">
@@ -799,14 +797,59 @@ export function PayoutsScreen() {
               </div>
               {totalCommitted > totalPot && (
                 <p className="text-red-700 font-semibold mt-1">
-                  Committed payouts exceed the current pot — either more players
-                  need to join/pay, or the amounts need adjusting.
+                  Committed payouts exceed the current pot.
                 </p>
               )}
             </div>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+export function PayoutsScreen() {
+  const { league, players, isCommissioner, setRegularSeasonPayoutSettings, setPlayoffPayoutSettings } =
+    useLeague();
+
+  const activeCount = players.filter((p) => !p.removedFromLeague).length;
+
+  return (
+    <div className="p-4 max-w-3xl">
+      <h2 className="text-2xl font-bold mb-1">Payouts</h2>
+      <p className="text-sm text-gray-600 mb-4">
+        Regular season and playoffs are separate pools — separate entry fees, separate prizes.
+        Season payout reflects today's rank, which will keep shifting until the season ends.
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <PayoutPoolCard
+          title="Regular Season"
+          isCommissioner={isCommissioner}
+          entryFee={league?.regularSeasonEntryFee ?? null}
+          weeklyPayout={league?.regularSeasonWeeklyPayout ?? null}
+          payouts={league?.regularSeasonPayouts ?? [null, null, null, null, null]}
+          activeCount={activeCount}
+          totalWeeks={18}
+          onSave={(settings) =>
+            setRegularSeasonPayoutSettings({
+              entryFee: settings.entryFee,
+              weeklyPayout: settings.weeklyPayout ?? null,
+              payouts: settings.payouts,
+            })
+          }
+        />
+        <PayoutPoolCard
+          title="Playoffs"
+          isCommissioner={isCommissioner}
+          entryFee={league?.playoffEntryFee ?? null}
+          payouts={league?.playoffPayouts ?? [null, null, null, null, null]}
+          activeCount={activeCount}
+          onSave={(settings) =>
+            setPlayoffPayoutSettings({ entryFee: settings.entryFee, payouts: settings.payouts })
+          }
+        />
+      </div>
     </div>
   );
 }
@@ -897,7 +940,7 @@ export function StandingsScreen() {
   // among players who are BOTH tied on points AND (if they guessed)
   // matched by the tiebreaker's own resolution.
   const weeklyWinningsByPlayer = new Map<string, number>();
-  if (league?.weeklyPayout) {
+  if (league?.regularSeasonWeeklyPayout) {
     weeks.forEach((w) => {
       const weekGames = allGames.filter((g) => g.week === w);
       const weekComplete = weekGames.length > 0 && weekGames.every((g) => !!g.result);
@@ -932,7 +975,7 @@ export function StandingsScreen() {
         // splitting evenly among the points-tied leaders, same as before.
       }
 
-      const share = league.weeklyPayout! / payoutTo.length;
+      const share = league.regularSeasonWeeklyPayout! / payoutTo.length;
       payoutTo.forEach((pid) => {
         weeklyWinningsByPlayer.set(pid, (weeklyWinningsByPlayer.get(pid) || 0) + share);
       });
@@ -942,10 +985,10 @@ export function StandingsScreen() {
   // Season winnings: based on CURRENT rank, not a final result — this
   // shifts as the season plays out, same as the standings themselves.
   const seasonWinningsByPlayer = new Map<string, number>();
-  if (league?.seasonPayouts) {
+  if (league?.regularSeasonPayouts) {
     standings.forEach((s) => {
       if (s.rank >= 1 && s.rank <= 5) {
-        const amount = league.seasonPayouts![s.rank - 1];
+        const amount = league.regularSeasonPayouts![s.rank - 1];
         if (amount) seasonWinningsByPlayer.set(s.playerId, amount);
       }
     });
@@ -970,7 +1013,7 @@ export function StandingsScreen() {
   return (
     <div className="p-4">
       <h2 className="text-2xl font-bold mb-1">Standings</h2>
-      {league?.seasonPayouts && (
+      {league?.regularSeasonPayouts && (
         <p className="text-xs text-gray-500 mb-4">
           Winnings shown are current, not final — season payout reflects today's rank, which will
           keep shifting.
