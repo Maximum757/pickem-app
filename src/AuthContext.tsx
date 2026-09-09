@@ -33,7 +33,7 @@ interface AuthContextType {
   user: User | null;
   authLoading: boolean;
   authError: string | null;
-  signUp: (email: string, password: string, displayName: string, leagueId: string) => Promise<void>;
+  signUp: (email: string, password: string, displayName: string, leagueId: string, phone?: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -54,7 +54,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return unsubscribe;
   }, []);
 
-  const signUp = async (email: string, password: string, displayName: string, leagueId: string) => {
+  const signUp = async (
+    email: string,
+    password: string,
+    displayName: string,
+    leagueId: string,
+    phone?: string
+  ) => {
     setAuthError(null);
     try {
       const auth = getAuth();
@@ -102,6 +108,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isCommissioner: false,
         joinedAt: Timestamp.now(),
         isWildcardPicker: false,
+        ...(phone?.trim() ? { phone: phone.trim() } : {}),
       });
     } catch (err: any) {
       setAuthError(readableAuthError(err));

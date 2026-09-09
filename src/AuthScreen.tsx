@@ -18,6 +18,7 @@ export function AuthScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [phone, setPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -25,7 +26,7 @@ export function AuthScreen() {
     setSubmitting(true);
     try {
       if (mode === "signup") {
-        await signUp(email, password, displayName, WEEK0_LEAGUE_ID);
+        await signUp(email, password, displayName, WEEK0_LEAGUE_ID, phone);
       } else {
         await signIn(email, password);
       }
@@ -77,6 +78,24 @@ export function AuthScreen() {
                 placeholder="e.g. Paterus Maximus"
                 className="w-full border p-2 rounded"
               />
+            </div>
+          )}
+
+          {mode === "signup" && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Phone number <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="(555) 555-5555"
+                className="w-full border p-2 rounded"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Only used to reach you if you miss a pick deadline — never required.
+              </p>
             </div>
           )}
 
