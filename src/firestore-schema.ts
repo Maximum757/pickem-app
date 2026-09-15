@@ -43,6 +43,14 @@ export interface LeagueDoc {
   regularSeasonPayouts?: (number | null)[]; // 1st through 5th place, in order —
                                              // any entry can be 0/null if the
                                              // league doesn't pay that deep.
+  regularSeasonDflAmount?: number | null; // "Dead F***ing Last" — a season-long
+                                           // standings concept like the 1st-5th
+                                           // payouts, so it follows the same
+                                           // wait-for-Week-18 reveal rule. Can be
+                                           // entered as a negative number for a
+                                           // penalty the last-place player owes,
+                                           // or positive for a consolation prize
+                                           // — commissioner's call, not enforced.
   playoffEntryFee?: number | null;
   playoffPayouts?: (number | null)[]; // Same 1st-5th shape as regular season,
                                        // for now — adjust if the real playoff
@@ -80,6 +88,10 @@ export interface PlayerDoc {
                    // field-level restricted, technically readable by anyone
                    // signed in, though only ever surfaced in the UI on the
                    // commissioner-only Members tab.
+  shortName?: string; // Max 5 chars, commissioner-set — used specifically for
+                       // compact displays like the Weekly Recap grid, where a
+                       // full name/team name would force wide columns. Falls
+                       // back to a truncated version of name when unset.
 }
 
 /**
@@ -432,6 +444,7 @@ export interface UILeague {
   regularSeasonEntryFee?: number | null;
   regularSeasonWeeklyPayout?: number | null;
   regularSeasonPayouts?: (number | null)[];
+  regularSeasonDflAmount?: number | null;
   playoffEntryFee?: number | null;
   playoffPayouts?: (number | null)[];
   commissionerId: string;

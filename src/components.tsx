@@ -638,6 +638,8 @@ function PayoutPoolCard({
   entryFee,
   weeklyPayout, // null/undefined means this pool has no weekly component (playoffs)
   payouts,
+  dflAmount, // undefined means this pool has no DFL line (playoffs) — null means
+             // it's available but not yet set
   activeCount,
   totalWeeks,
   onSave,
@@ -647,25 +649,37 @@ function PayoutPoolCard({
   entryFee: number | null;
   weeklyPayout?: number | null;
   payouts: (number | null)[];
+  dflAmount?: number | null;
   activeCount: number;
   totalWeeks?: number; // only relevant if weeklyPayout is used
-  onSave: (settings: { entryFee: number | null; weeklyPayout?: number | null; payouts: (number | null)[] }) => void;
+  onSave: (settings: {
+    entryFee: number | null;
+    weeklyPayout?: number | null;
+    payouts: (number | null)[];
+    dflAmount?: number | null;
+  }) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [entryFeeDraft, setEntryFeeDraft] = useState("");
   const [weeklyDraft, setWeeklyDraft] = useState("");
   const [payoutDrafts, setPayoutDrafts] = useState<string[]>(["", "", "", "", ""]);
+  const [dflDraft, setDflDraft] = useState("");
 
   const totalPot = entryFee !== null ? entryFee * activeCount : null;
   const totalWeeklyCommitment =
     weeklyPayout !== undefined && weeklyPayout !== null && totalWeeks ? weeklyPayout * totalWeeks : 0;
   const totalPayoutCommitment = payouts.reduce((sum: number, p) => sum + (p || 0), 0);
-  const totalCommitted = totalWeeklyCommitment + totalPayoutCommitment;
+  // DFL is typically a penalty (negative), not a prize — only add it to the
+  // committed-vs-pot check when it's actually a positive payout, since a
+  // negative amount is money coming IN, not going out.
+  const dflCommitment = dflAmount !== undefined && dflAmount !== null && dflAmount > 0 ? dflAmount : 0;
+  const totalCommitted = totalWeeklyCommitment + totalPayoutCommitment + dflCommitment;
 
   const startEditing = () => {
     setEntryFeeDraft(entryFee !== null ? String(entryFee) : "");
     setWeeklyDraft(weeklyPayout !== null && weeklyPayout !== undefined ? String(weeklyPayout) : "");
     setPayoutDrafts(payouts.map((p) => (p !== null ? String(p) : "")));
+    setDflDraft(dflAmount !== null && dflAmount !== undefined ? String(dflAmount) : "");
     setEditing(true);
   };
 
@@ -676,6 +690,7 @@ function PayoutPoolCard({
         ? { weeklyPayout: weeklyDraft ? parseFloat(weeklyDraft) : null }
         : {}),
       payouts: payoutDrafts.map((d) => (d ? parseFloat(d) : null)),
+      ...(dflAmount !== undefined ? { dflAmount: dflDraft ? parseFloat(dflDraft) : null } : {}),
     });
     setEditing(false);
   };
@@ -738,6 +753,20 @@ function PayoutPoolCard({
               ))}
             </div>
           </div>
+          {dflAmount !== undefined && (
+            <div>
+              <label className="block text-sm font-medium mb-1">
+                DFL <span className="text-gray-400 font-normal">(last place — negative for a penalty)</span>
+              </label>
+              <input
+                type="number"
+                value={dflDraft}
+                onChange={(e) => setDflDraft(e.target.value)}
+                placeholder="e.g. -50"
+                className="w-32 border p-2 rounded text-sm"
+              />
+            </div>
+          )}
           <div className="flex gap-2">
             <button
               onClick={save}
@@ -779,6 +808,14 @@ function PayoutPoolCard({
                 <span className="font-semibold">${payouts[i] || 0}</span>
               </div>
             ))}
+            {dflAmount !== undefined && (
+              <div className="flex justify-between text-sm pt-1 border-t mt-1">
+                <span className="text-gray-600">DFL</span>
+                <span className={`font-semibold ${dflAmount && dflAmount < 0 ? "text-red-600" : ""}`}>
+                  {dflAmount ? `${dflAmount < 0 ? "-$" + Math.abs(dflAmount) : "$" + dflAmount}` : "$0"}
+                </span>
+              </div>
+            )}
           </div>
 
           {totalPot !== null && (
@@ -829,6 +866,7 @@ export function PayoutsScreen() {
           entryFee={league?.regularSeasonEntryFee ?? null}
           weeklyPayout={league?.regularSeasonWeeklyPayout ?? null}
           payouts={league?.regularSeasonPayouts ?? [null, null, null, null, null]}
+          dflAmount={league?.regularSeasonDflAmount ?? null}
           activeCount={activeCount}
           totalWeeks={18}
           onSave={(settings) =>
@@ -836,6 +874,7 @@ export function PayoutsScreen() {
               entryFee: settings.entryFee,
               weeklyPayout: settings.weeklyPayout ?? null,
               payouts: settings.payouts,
+              dflAmount: settings.dflAmount ?? null,
             })
           }
         />
@@ -982,16 +1021,32 @@ export function StandingsScreen() {
     });
   }
 
-  // Season winnings: based on CURRENT rank, not a final result — this
-  // shifts as the season plays out, same as the standings themselves.
+  // Season winnings only appear once the regular season has actually
+  // finished (every Week 18 game final) — showing "1st/2nd/3rd get paid
+  // this much" while the season's still in progress implies a result that
+  // hasn't actually happened yet. Standings/rank stay live throughout;
+  // it's specifically the $ payout that waits.
+  const finalWeekGames = allGames.filter((g) => g.week === 18);
+  const seasonComplete = finalWeekGames.length > 0 && finalWeekGames.every((g) => !!g.result);
+
   const seasonWinningsByPlayer = new Map<string, number>();
-  if (league?.regularSeasonPayouts) {
+  if (seasonComplete && league?.regularSeasonPayouts) {
     standings.forEach((s) => {
       if (s.rank >= 1 && s.rank <= 5) {
         const amount = league.regularSeasonPayouts![s.rank - 1];
         if (amount) seasonWinningsByPlayer.set(s.playerId, amount);
       }
     });
+  }
+  // DFL — whoever's in last place once the season's actually over. Can be
+  // negative (a penalty they owe, subtracted from their total) or positive
+  // (a consolation prize), per however the commissioner entered it.
+  if (seasonComplete && league?.regularSeasonDflAmount && standings.length > 0) {
+    const lastPlace = standings[standings.length - 1];
+    seasonWinningsByPlayer.set(
+      lastPlace.playerId,
+      (seasonWinningsByPlayer.get(lastPlace.playerId) || 0) + league.regularSeasonDflAmount
+    );
   }
 
   const totalWinnings = (playerId: string) =>
@@ -1013,10 +1068,10 @@ export function StandingsScreen() {
   return (
     <div className="p-4">
       <h2 className="text-2xl font-bold mb-1">Standings</h2>
-      {league?.regularSeasonPayouts && (
+      {league?.regularSeasonPayouts && !seasonComplete && (
         <p className="text-xs text-gray-500 mb-4">
-          Winnings shown are current, not final — season payout reflects today's rank, which will
-          keep shifting.
+          Season-long payouts aren't awarded until Week 18 finishes — weekly winnings still show as
+          each week wraps up.
         </p>
       )}
 
@@ -1028,7 +1083,7 @@ export function StandingsScreen() {
               <th className="text-left py-2 pr-4 sticky left-8 bg-white">Player</th>
               <th className="text-center py-2 px-3 font-bold border-l-2 border-r-2">Total</th>
               {weeks.map((w) => (
-                <th key={w} className="text-right py-2 px-2 font-semibold text-gray-600 whitespace-nowrap">
+                <th key={w} className="text-center py-2 px-2 font-semibold text-gray-600 whitespace-nowrap">
                   Wk {w}
                 </th>
               ))}
@@ -1057,7 +1112,7 @@ export function StandingsScreen() {
                       return (
                         <td
                           key={w}
-                          className={`text-right pt-2 px-2 font-semibold ${
+                          className={`text-center pt-2 px-2 font-semibold ${
                             isWeeklyHigh ? "bg-yellow-100 text-yellow-800 rounded" : ""
                           }`}
                         >
@@ -1075,7 +1130,7 @@ export function StandingsScreen() {
                       {s.totalCorrect} correct
                     </td>
                     {weeks.map((w) => (
-                      <td key={w} className="text-right pb-2 px-2 text-xs text-gray-400">
+                      <td key={w} className="text-center pb-2 px-2 text-xs text-gray-400">
                         {correctMap?.get(w) !== undefined ? correctMap.get(w) : ""}
                       </td>
                     ))}
@@ -2107,7 +2162,7 @@ export function WeeklySummary() {
   recap.sort((a, b) => b.points - a.points);
 
   return (
-    <div className="p-4 max-w-2xl">
+    <div className="p-4 max-w-6xl">
       <h2 className="text-2xl font-bold mb-1">Weekly Recap</h2>
       <p className="text-sm text-gray-600 mb-4">Screenshot this to send out</p>
 
@@ -2119,13 +2174,17 @@ export function WeeklySummary() {
         <>
           {/* Everyone's picks, color-coded, for the week that just locked */}
           <div className="mb-6 overflow-x-auto border rounded">
-            <table className="text-xs border-collapse">
+            <table className="text-xs border-collapse w-full">
               <thead>
                 <tr>
                   <th className="p-1 bg-gray-100 sticky left-0 text-left">Game</th>
                   {players.map((p) => (
-                    <th key={p.id} className="p-1 bg-gray-100 text-center whitespace-nowrap">
-                      {p.name}
+                    <th
+                      key={p.id}
+                      className="p-1 bg-gray-100 text-center whitespace-nowrap"
+                      title={p.name}
+                    >
+                      {p.shortName || p.name.slice(0, 5)}
                     </th>
                   ))}
                 </tr>
@@ -2241,11 +2300,14 @@ type ViewType = "picks" | "mysummary" | "everyonespicks" | "standings" | "payout
 // ============================================================================
 
 export function MembersScreen() {
-  const { players, setPlayerPaid, removePlayer, restorePlayer, updatePlayerPhone } = useLeague();
+  const { players, setPlayerPaid, removePlayer, restorePlayer, updatePlayerPhone, updatePlayerShortName } =
+    useLeague();
   const [confirmingRemove, setConfirmingRemove] = useState<string | null>(null);
   const [confirmingUnpay, setConfirmingUnpay] = useState<string | null>(null);
   const [editingPhone, setEditingPhone] = useState<string | null>(null);
   const [phoneDraft, setPhoneDraft] = useState("");
+  const [editingShortName, setEditingShortName] = useState<string | null>(null);
+  const [shortNameDraft, setShortNameDraft] = useState("");
 
   const activePlayers = players.filter((p) => !p.removedFromLeague);
   const removedPlayers = players.filter((p) => p.removedFromLeague);
@@ -2260,6 +2322,15 @@ export function MembersScreen() {
     setEditingPhone(null);
   };
 
+  const startEditingShortName = (p: schema.PlayerDoc) => {
+    setShortNameDraft(p.shortName || "");
+    setEditingShortName(p.id);
+  };
+  const saveShortName = (playerId: string) => {
+    updatePlayerShortName(playerId, shortNameDraft.trim());
+    setEditingShortName(null);
+  };
+
   return (
     <div className="p-4 max-w-2xl">
       <div className="flex items-center justify-between mb-1">
@@ -2269,7 +2340,9 @@ export function MembersScreen() {
         </span>
       </div>
       <p className="text-sm text-gray-600 mb-4">
-        Names, emails, and phone numbers for everyone in the league, and who's paid their dues.
+        Names, emails, and phone numbers for everyone in the league, and who's paid their dues. The
+        short nickname (max 5 characters) is only used to keep compact grids like Weekly Recap
+        readable.
       </p>
 
       <div className="space-y-2">
@@ -2312,6 +2385,44 @@ export function MembersScreen() {
                 >
                   {p.phone || <span className="text-gray-400 italic">Add phone number</span>}
                   {p.phone && <span className="text-gray-400"> ✎</span>}
+                </button>
+              )}
+              {editingShortName === p.id ? (
+                <div className="flex items-center gap-1 mt-1">
+                  <input
+                    type="text"
+                    value={shortNameDraft}
+                    onChange={(e) => setShortNameDraft(e.target.value.slice(0, 5))}
+                    onKeyDown={(e) => e.key === "Enter" && saveShortName(p.id)}
+                    placeholder="5 chars"
+                    maxLength={5}
+                    autoFocus
+                    className="text-xs border rounded px-2 py-1 w-20"
+                  />
+                  <button
+                    onClick={() => saveShortName(p.id)}
+                    className="text-xs font-semibold text-green-600"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setEditingShortName(null)}
+                    className="text-xs text-gray-400"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => startEditingShortName(p)}
+                  className="text-xs text-gray-500 hover:underline mt-0.5 block"
+                >
+                  {p.shortName ? (
+                    <>Nickname: {p.shortName}</>
+                  ) : (
+                    <span className="text-gray-400 italic">Add short nickname</span>
+                  )}
+                  {p.shortName && <span className="text-gray-400"> ✎</span>}
                 </button>
               )}
             </div>

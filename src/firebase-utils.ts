@@ -1024,6 +1024,7 @@ export async function setRegularSeasonPayoutSettings(
     entryFee: number | null;
     weeklyPayout: number | null;
     payouts: (number | null)[];
+    dflAmount: number | null;
   }
 ): Promise<void> {
   const leagueRef = doc(db, "leagues", leagueId);
@@ -1031,6 +1032,7 @@ export async function setRegularSeasonPayoutSettings(
     regularSeasonEntryFee: settings.entryFee,
     regularSeasonWeeklyPayout: settings.weeklyPayout,
     regularSeasonPayouts: settings.payouts,
+    regularSeasonDflAmount: settings.dflAmount,
   });
 }
 
@@ -1072,6 +1074,21 @@ export async function updatePlayerName(leagueId: string, playerId: string, name:
 export async function updatePlayerPhone(leagueId: string, playerId: string, phone: string): Promise<void> {
   const playerRef = doc(db, `leagues/${leagueId}/players`, playerId);
   await updateDoc(playerRef, { phone });
+}
+
+/**
+ * Commissioner sets a short (max 5 char) nickname for compact displays like
+ * the Weekly Recap grid. Enforced here too, not just in the input's
+ * maxLength, since this can be called from anywhere that imports
+ * firebase-utils.
+ */
+export async function updatePlayerShortName(
+  leagueId: string,
+  playerId: string,
+  shortName: string
+): Promise<void> {
+  const playerRef = doc(db, `leagues/${leagueId}/players`, playerId);
+  await updateDoc(playerRef, { shortName: shortName.slice(0, 5) });
 }
 
 /**

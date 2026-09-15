@@ -33,6 +33,7 @@ interface LeagueContextType {
   advanceToWeek: (week: number) => Promise<void>;
   updateMyName: (name: string) => Promise<void>;
   updatePlayerPhone: (playerId: string, phone: string) => Promise<void>;
+  updatePlayerShortName: (playerId: string, shortName: string) => Promise<void>;
   assignMissedPick: (gameId: string, playerId: string, pickedTeam: string) => Promise<void>;
   lockAllPassedKickoffGames: () => Promise<number>;
   setPlayerPaid: (playerId: string, hasPaid: boolean) => Promise<void>;
@@ -44,6 +45,7 @@ interface LeagueContextType {
     entryFee: number | null;
     weeklyPayout: number | null;
     payouts: (number | null)[];
+    dflAmount: number | null;
   }) => Promise<void>;
   setPlayoffPayoutSettings: (settings: {
     entryFee: number | null;
@@ -542,6 +544,19 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const handleUpdatePlayerShortName = async (targetPlayerId: string, shortName: string) => {
+    if (!leagueId) return;
+    try {
+      const trimmed = shortName.slice(0, 5);
+      await firebaseUtils.updatePlayerShortName(leagueId, targetPlayerId, trimmed);
+      setPlayers((prev) =>
+        prev.map((p) => (p.id === targetPlayerId ? { ...p, shortName: trimmed } : p))
+      );
+    } catch (err) {
+      setError(`Failed to update short name: ${err}`);
+    }
+  };
+
   const handleAssignMissedPick = async (gameId: string, forPlayerId: string, pickedTeam: string) => {
     if (!leagueId) return;
     try {
@@ -639,6 +654,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     entryFee: number | null;
     weeklyPayout: number | null;
     payouts: (number | null)[];
+    dflAmount: number | null;
   }) => {
     if (!leagueId) return;
     try {
@@ -650,6 +666,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
               regularSeasonEntryFee: settings.entryFee,
               regularSeasonWeeklyPayout: settings.weeklyPayout,
               regularSeasonPayouts: settings.payouts,
+              regularSeasonDflAmount: settings.dflAmount,
             }
           : prev
       );
@@ -759,6 +776,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         advanceToWeek: handleAdvanceToWeek,
         updateMyName: handleUpdateMyName,
         updatePlayerPhone: handleUpdatePlayerPhone,
+        updatePlayerShortName: handleUpdatePlayerShortName,
         assignMissedPick: handleAssignMissedPick,
         lockAllPassedKickoffGames: handleLockAllPassedKickoffGames,
         setPlayerPaid: handleSetPlayerPaid,
