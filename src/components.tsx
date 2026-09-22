@@ -1348,6 +1348,7 @@ export function CommissionerDashboard() {
     [gameId: string]: { [playerId: string]: { pickedTeam: string; isWildcard: boolean } };
   }>({});
   const [tiebreakerEnteredBy, setTiebreakerEnteredBy] = useState<Set<string>>(new Set());
+  const [tiebreakerGuessValues, setTiebreakerGuessValues] = useState<{ [playerId: string]: number }>({});
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [fillingGameId, setFillingGameId] = useState<string | null>(null);
   // Per-row UI state for the fill-in panel, keyed by `${gameId}_${playerId}`
@@ -1376,6 +1377,9 @@ export function CommissionerDashboard() {
     setPickedByGame(byGame);
     setPickDetailsByGame(detailsByGame);
     setTiebreakerEnteredBy(new Set(allGuesses.map((g) => g.playerId)));
+    const guessValues: { [playerId: string]: number } = {};
+    allGuesses.forEach((g) => (guessValues[g.playerId] = g.guess));
+    setTiebreakerGuessValues(guessValues);
   }, [leagueId, currentWeek]);
 
   React.useEffect(() => {
@@ -1739,7 +1743,7 @@ export function CommissionerDashboard() {
           <label className="block text-sm font-medium">Record Correct Answer</label>
           <p className="text-xs text-gray-500">
             Fill this in once you actually know it — usually after the relevant game
-            finishes. Players never see this value.
+            finishes. Shown to everyone on the picks screen once you save it.
           </p>
           <div className="flex gap-2">
             <input
@@ -1756,6 +1760,30 @@ export function CommissionerDashboard() {
             >
               Save
             </button>
+          </div>
+        </div>
+
+        <div className="border-t pt-3 mt-3">
+          <label className="block text-sm font-medium mb-2">
+            Entries ({Object.keys(tiebreakerGuessValues).length} / {players.filter((p) => !p.removedFromLeague).length})
+          </label>
+          <div className="space-y-1 max-h-64 overflow-y-auto">
+            {players
+              .filter((p) => !p.removedFromLeague)
+              .map((p) => {
+                const guess = tiebreakerGuessValues[p.id];
+                return (
+                  <div key={p.id} className="flex justify-between text-sm px-1">
+                    <span className={guess === undefined ? "text-gray-400" : ""}>{p.name}</span>
+                    <span className={guess === undefined ? "text-gray-400 italic" : "font-semibold"}>
+                      {guess !== undefined ? guess : "No entry"}
+                    </span>
+                  </div>
+                );
+              })}
+            {players.filter((p) => !p.removedFromLeague).length === 0 && (
+              <p className="text-xs text-gray-400">No active members yet.</p>
+            )}
           </div>
         </div>
 
