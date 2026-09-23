@@ -2486,6 +2486,7 @@ function WeeklyProgressChart({
   colorByPlayerId,
   width,
   height,
+  startingPoints,
 }: {
   games: schema.UIGame[];
   rankedPlayers: schema.PlayerDoc[];
@@ -2493,14 +2494,15 @@ function WeeklyProgressChart({
   colorByPlayerId: { [playerId: string]: string };
   width: number;
   height: number;
+  startingPoints?: { [playerId: string]: number };
 }) {
   const finalGames = games.filter((g) => g.result).sort((a, b) => a.order - b.order);
   if (finalGames.length === 0 || rankedPlayers.length === 0) return null;
 
   const series = rankedPlayers.map((player) => {
-    let cum = 0;
+    let cum = startingPoints?.[player.id] || 0;
     const values = [
-      0,
+      cum,
       ...finalGames.map((g) => {
         cum += pickLookup[player.id]?.[g.id]?.pointsAwarded || 0;
         return cum;
@@ -2534,8 +2536,17 @@ function WeeklyProgressChart({
     };
   };
 
-  const yMax = niceChartMax(Math.max(1, ...series.flatMap((s) => s.values)));
-  const yTicks = chartYTicks(yMax);
+  // Season mode starts everyone at their prior total, so the axis floor
+  // follows the lowest starting point instead of wasting space down to 0.
+  const allValues = series.flatMap((s) => s.values);
+  const lo = startingPoints ? Math.min(...allValues) : 0;
+  const hi = Math.max(lo + 1, ...allValues);
+  const rangeTicks = chartYTicks(niceChartMax(hi - lo));
+  const yStep = rangeTicks.length > 1 ? rangeTicks[1] - rangeTicks[0] : 1;
+  const yMin = Math.floor(lo / yStep) * yStep;
+  const yMax = yMin + Math.ceil((hi - yMin) / yStep) * yStep;
+  const yTicks: number[] = [];
+  for (let v = yMin; v <= yMax; v += yStep) yTicks.push(v);
 
   const W = width;
   const H = height;
@@ -2548,7 +2559,7 @@ function WeeklyProgressChart({
   const xStep = innerW / finalGames.length;
 
   const xAt = (i: number) => padL + i * xStep;
-  const yAt = (v: number) => padT + innerH - (v / yMax) * innerH;
+  const yAt = (v: number) => padT + innerH - ((v - yMin) / (yMax - yMin)) * innerH;
 
   // End-of-line name labels sit as close to each player's last dot as they
   // can: labels that would collide merge into a block centered on the
@@ -2634,14 +2645,14 @@ function WeeklyProgressChart({
                   />
                 )}
                 {s.values.map((v, i) =>
-                  i === 0 ? null : (
-                    <circle key={finalGames[i - 1].id} cx={xAt(i)} cy={yAt(v)} r={4} fill={s.color} />
+                  i === 0 && !startingPoints ? null : (
+                    <circle key={i} cx={xAt(i)} cy={yAt(v)} r={4} fill={s.color} />
                   )
                 )}
               </g>
             );
           })}
-          <circle cx={xAt(0)} cy={yAt(0)} r={3.5} fill="#6b7280" />
+          {!startingPoints && <circle cx={xAt(0)} cy={yAt(0)} r={3.5} fill="#6b7280" />}
           <text
             x={xAt(0)}
             y={H - 12}
@@ -2729,6 +2740,25 @@ export function WeekProgressScreen() {
       .finally(() => setLoadingPicks(false));
   }, [leagueId, playerId, currentWeek]);
 
+  const [mode, setMode] = useState<"week" | "season">("week");
+  const [priorTotals, setPriorTotals] = useState<{ [playerId: string]: number } | null>(null);
+
+  React.useEffect(() => {
+    if (!leagueId || mode !== "season") return;
+    setPriorTotals(null);
+    // Week 0 is the test slate and never counts toward the season.
+    const priorWeeks = Array.from({ length: Math.max(0, currentWeek - 1) }, (_, i) => i + 1);
+    Promise.all(priorWeeks.map((w) => firebaseUtils.getWeeklyScores(leagueId, w)))
+      .then((weeks) => {
+        const totals: { [playerId: string]: number } = {};
+        weeks.flat().forEach((s) => {
+          totals[s.playerId] = (totals[s.playerId] || 0) + (s.pointsAfterMultiplier || 0);
+        });
+        setPriorTotals(totals);
+      })
+      .catch((err) => setLoadError(`Failed to load prior weeks: ${err}`));
+  }, [leagueId, currentWeek, mode]);
+
   const activePlayers = players.filter((p) => !p.removedFromLeague);
   const colorByPlayerId: { [playerId: string]: string } = {};
   activePlayers.forEach((p, i) => {
@@ -2747,8 +2777,10 @@ export function WeekProgressScreen() {
 
   const weekPoints = (id: string) =>
     Object.values(pickLookup[id] || {}).reduce((sum, p) => sum + (p.pointsAwarded || 0), 0);
+  const startingPoints = mode === "season" ? priorTotals ?? undefined : undefined;
+  const endPoints = (id: string) => (startingPoints?.[id] || 0) + weekPoints(id);
   const rankedPlayers = [...activePlayers].sort(
-    (a, b) => weekPoints(b.id) - weekPoints(a.id) || a.name.localeCompare(b.name)
+    (a, b) => endPoints(b.id) - endPoints(a.id) || a.name.localeCompare(b.name)
   );
   const hasFinals = games.some((g) => g.result);
 
@@ -2756,8 +2788,34 @@ export function WeekProgressScreen() {
     <div className="p-4">
       <WeekSelector currentWeek={currentWeek} officialWeek={league?.currentWeek} onChange={setCurrentWeek} />
       <h2 className="text-2xl font-bold mb-1">Week {currentWeek} Progress</h2>
-      <p className="text-sm text-gray-600 mb-4">Running point totals after each final, in pick-sheet order.</p>
-      {loading || loadingPicks ? (
+      <div className="flex items-center gap-3 mb-4">
+        <div className="inline-flex rounded border overflow-hidden text-sm">
+          {(
+            [
+              ["week", "This week"],
+              ["season", "Season standings"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setMode(value)}
+              className={`px-3 py-1.5 font-medium transition ${
+                mode === value ? "bg-blue-500 text-white" : "bg-white hover:bg-gray-100"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="text-sm text-gray-600">
+          {mode === "week"
+            ? "Running point totals after each final, in pick-sheet order."
+            : currentWeek <= 1
+            ? "Season totals. Week 1 is the first week, so everyone starts at 0."
+            : `Season totals, starting from where everyone stood after Week ${currentWeek - 1}.`}
+        </p>
+      </div>
+      {loading || loadingPicks || (mode === "season" && !priorTotals && !loadError) ? (
         <div className="text-sm text-gray-600">Loading...</div>
       ) : loadError ? (
         <div className="text-sm text-red-600">{loadError}</div>
@@ -2773,6 +2831,7 @@ export function WeekProgressScreen() {
               colorByPlayerId={colorByPlayerId}
               width={chartSize.width}
               height={chartSize.height}
+              startingPoints={startingPoints}
             />
           )}
         </div>
