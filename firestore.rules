@@ -81,10 +81,19 @@ service cloud.firestore {
 
       match /tiebreakerGuesses/{guessId} {
         // A player can read only their own guess (id is `${uid}_${week}`).
+        // playerId field check (not just the id pattern) so a list query
+        // filtered on playerId==self is statically provable, same reason
+        // picks use resource.data.playerId rather than the document id.
+        allow read: if isSignedIn() && resource.data.playerId == request.auth.uid;
         allow read: if isSignedIn() && guessId.matches(request.auth.uid + '_.*');
         // Commissioner can read all guesses (to show "X / Y entered" —
         // never the guess values themselves in that view).
         allow read: if isCommissioner(leagueId);
+        // Everyone can see a guess once the week's last game has locked
+        // and maybeRevealTiebreakerGuesses() flipped this flag — same
+        // denormalized-flag pattern as picks.visibleToAll. List queries
+        // MUST filter on visibleToAll==true or Firestore denies them.
+        allow read: if isSignedIn() && resource.data.visibleToAll == true;
 
         // A player can create/update their OWN guess, but only while that
         // week's tiebreaker isn't locked yet.

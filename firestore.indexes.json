@@ -1,4 +1,13 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "tiebreakerGuesses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "week", "order": "ASCENDING" },
+        { "fieldPath": "visibleToAll", "order": "ASCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": []
 }

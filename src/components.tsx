@@ -182,17 +182,19 @@ function WeekSelector({
   currentWeek,
   officialWeek,
   onChange,
+  children,
 }: {
   currentWeek: number;
   officialWeek: number | undefined;
   onChange: (week: number) => void;
+  children?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-2 mb-3">
+    <div className="flex items-start gap-3 mb-3">
       <select
         value={currentWeek}
         onChange={(e) => onChange(parseInt(e.target.value))}
-        className="border rounded px-2 py-1 text-sm font-semibold"
+        className="border rounded px-2 py-1 text-sm font-semibold shrink-0"
       >
         {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
           <option key={w} value={w}>
@@ -203,11 +205,12 @@ function WeekSelector({
       {officialWeek !== undefined && currentWeek !== officialWeek && (
         <button
           onClick={() => onChange(officialWeek)}
-          className="text-xs text-blue-600 font-medium hover:underline"
+          className="text-xs text-blue-600 font-medium hover:underline shrink-0 mt-1.5"
         >
           Back to current week
         </button>
       )}
+      {children}
     </div>
   );
 }
@@ -231,12 +234,14 @@ export function PicksScreen() {
     weeklyLeader,
     leagueMaxWeeklyPoints,
     playerId,
+    leagueId,
     isCommissioner,
     myWeekLocked,
     setMyWeekLocked,
   } = useLeague();
   const now = useNow();
   const [tbDraft, setTbDraft] = useState<string>(myTiebreakerGuess?.toString() ?? "");
+  const [visibleWeekPicks, setVisibleWeekPicks] = useState<schema.PickDoc[]>([]);
   // Per-device preference, not per-account — a shared family tablet stays
   // in logo mode across whoever's signed in, which is the actual use case
   // (a parent picks once, a kid uses the same device later).
@@ -250,6 +255,26 @@ export function PicksScreen() {
     });
   };
   const [tbSaved, setTbSaved] = useState(false);
+
+  React.useEffect(() => {
+    if (!leagueId || !playerId) return;
+    (async () => {
+      try {
+        setVisibleWeekPicks(
+          await firebaseUtils.getVisiblePicksForWeek(leagueId, currentWeek, playerId)
+        );
+      } catch {
+        setVisibleWeekPicks([]);
+      }
+    })();
+  }, [leagueId, playerId, currentWeek]);
+
+  const countsFromVisiblePicks = new Map<string, { [team: string]: number }>();
+  visibleWeekPicks.forEach((p) => {
+    if (!countsFromVisiblePicks.has(p.gameId)) countsFromVisiblePicks.set(p.gameId, {});
+    const byTeam = countsFromVisiblePicks.get(p.gameId)!;
+    byTeam[p.pickedTeam] = (byTeam[p.pickedTeam] || 0) + 1;
+  });
 
   const handlePick = (gameId: string, team: string) => {
     if (myWeekLocked) return;
@@ -418,8 +443,13 @@ export function PicksScreen() {
 
           function subtextFor(abbr: string): string {
             const isAway = abbr === game.awayTeam;
-            if (isLocked && game.pickCounts) {
-              const count = game.pickCounts[abbr] || 0;
+            // Spread is only useful while the game is still open. Finals
+            // count as locked too — the old check skipped them, which is
+            // why +3/-3 was still showing under finished games.
+            const hasClosed = game.isLocked || isPastKickoff || isFinal;
+            if (hasClosed) {
+              const counts = game.pickCounts || countsFromVisiblePicks.get(game.id);
+              const count = counts?.[abbr] || 0;
               return `${count} pick${count === 1 ? "" : "s"}`;
             }
             const spread = isAway ? game.awaySpread : game.homeSpread;
@@ -893,6 +923,11 @@ export function PayoutsScreen() {
   );
 }
 
+type StandingsSort =
+  | { column: "season" }
+  | { column: "total"; dir: "desc" | "asc" }
+  | { column: "week"; week: number; dir: "desc" | "asc" };
+
 export function StandingsScreen() {
   const { leagueId, playerId, standings, league, loading } = useLeague();
   const [allGames, setAllGames] = useState<schema.GameDoc[]>([]);
@@ -902,6 +937,11 @@ export function StandingsScreen() {
   >(new Map());
   const [loadingGrid, setLoadingGrid] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Default is season rank (the cached standings order). Clicking Total or
+  // a week header re-sorts the rows by that column; clicking Rank returns
+  // to season order. Rank numbers themselves stay season rank so you can
+  // still see overall place after reordering by a week.
+  const [sort, setSort] = useState<StandingsSort>({ column: "season" });
 
   React.useEffect(() => {
     if (!leagueId || !playerId) return;
@@ -1052,6 +1092,41 @@ export function StandingsScreen() {
   const totalWinnings = (playerId: string) =>
     (weeklyWinningsByPlayer.get(playerId) || 0) + (seasonWinningsByPlayer.get(playerId) || 0);
 
+  const clickSort = (next: StandingsSort) => {
+    setSort((prev) => {
+      if (next.column === "season") return { column: "season" };
+      if (next.column === "total" && prev.column === "total") {
+        return { column: "total", dir: prev.dir === "desc" ? "asc" : "desc" };
+      }
+      if (next.column === "week" && prev.column === "week" && prev.week === next.week) {
+        return { column: "week", week: next.week, dir: prev.dir === "desc" ? "asc" : "desc" };
+      }
+      return next;
+    });
+  };
+
+  const sortedStandings = [...standings].sort((a, b) => {
+    const byRank = a.rank - b.rank;
+    if (sort.column === "season") return byRank;
+
+    const dir = sort.dir === "desc" ? -1 : 1;
+    if (sort.column === "total") {
+      if (a.totalPoints !== b.totalPoints) return (a.totalPoints - b.totalPoints) * dir;
+      return byRank;
+    }
+
+    const aPts = pointsByPlayerWeek.get(a.playerId)?.get(sort.week);
+    const bPts = pointsByPlayerWeek.get(b.playerId)?.get(sort.week);
+    if (aPts === undefined && bPts === undefined) return byRank;
+    if (aPts === undefined) return 1;
+    if (bPts === undefined) return -1;
+    if (aPts !== bPts) return (aPts - bPts) * dir;
+    return byRank;
+  });
+
+  const sortMark = (active: boolean, dir?: "desc" | "asc") =>
+    active ? (dir === "asc" ? " ▲" : " ▼") : "";
+
   // The raw weekly-high score per week, regardless of tiebreaker resolution —
   // this is a "who scored the most this week" visual, separate from (and
   // simpler than) the $ payout logic above, which can differ in a genuine tie.
@@ -1068,6 +1143,9 @@ export function StandingsScreen() {
   return (
     <div className="p-4">
       <h2 className="text-2xl font-bold mb-1">Standings</h2>
+      <p className="text-xs text-gray-500 mb-2">
+        Tap Total or a week to sort. Rank is always season place.
+      </p>
       {league?.regularSeasonPayouts && !seasonComplete && (
         <p className="text-xs text-gray-500 mb-4">
           Season-long payouts aren't awarded until Week 18 finishes — weekly winnings still show as
@@ -1079,18 +1157,52 @@ export function StandingsScreen() {
         <table className="border-collapse text-sm">
           <thead>
             <tr className="border-b-2">
-              <th className="text-left py-2 pr-3 sticky left-0 bg-white">Rank</th>
+              <th className="text-left py-2 pr-3 sticky left-0 bg-white">
+                <button
+                  type="button"
+                  onClick={() => clickSort({ column: "season" })}
+                  className={`whitespace-nowrap font-bold ${
+                    sort.column === "season" ? "text-black" : "text-gray-600 hover:text-black"
+                  }`}
+                >
+                  Rank{sort.column === "season" ? " ▼" : ""}
+                </button>
+              </th>
               <th className="text-left py-2 pr-4 sticky left-8 bg-white">Player</th>
-              <th className="text-center py-2 px-3 font-bold border-l-2 border-r-2">Total</th>
+              <th className="text-center py-2 px-3 font-bold border-l-2 border-r-2">
+                <button
+                  type="button"
+                  onClick={() => clickSort({ column: "total", dir: "desc" })}
+                  className={`whitespace-nowrap ${
+                    sort.column === "total" ? "text-black" : "hover:text-black"
+                  }`}
+                >
+                  Total{sortMark(sort.column === "total", sort.column === "total" ? sort.dir : undefined)}
+                </button>
+              </th>
               {weeks.map((w) => (
                 <th key={w} className="text-center py-2 px-2 font-semibold text-gray-600 whitespace-nowrap">
-                  Wk {w}
+                  <button
+                    type="button"
+                    onClick={() => clickSort({ column: "week", week: w, dir: "desc" })}
+                    className={`whitespace-nowrap ${
+                      sort.column === "week" && sort.week === w
+                        ? "text-black font-bold"
+                        : "hover:text-black"
+                    }`}
+                  >
+                    Wk {w}
+                    {sortMark(
+                      sort.column === "week" && sort.week === w,
+                      sort.column === "week" && sort.week === w ? sort.dir : undefined
+                    )}
+                  </button>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {standings.map((s) => {
+            {sortedStandings.map((s) => {
               const weekMap = pointsByPlayerWeek.get(s.playerId);
               const correctMap = correctByPlayerWeek.get(s.playerId);
               const winnings = totalWinnings(s.playerId);
@@ -1987,12 +2099,27 @@ export function CommissionerDashboard() {
 // This is just: for each game this week, who picked which team — visible
 // exactly per the same reveal rules as everywhere else (a game's picks
 // show once it locks; the commissioner's own may show earlier if they've
-// locked their week).
+// locked their week). Tiebreaker guesses get their own row, tied to the
+// last game on the pick sheet — that row only appears once that game
+// locks, same moment those last-game picks become public.
 // ============================================================================
 
 export function EveryonesPicksScreen() {
-  const { leagueId, playerId, games, players, currentWeek, setCurrentWeek, league, loading } = useLeague();
+  const {
+    leagueId,
+    playerId,
+    games,
+    players,
+    currentWeek,
+    setCurrentWeek,
+    league,
+    loading,
+    isCommissioner,
+  } = useLeague();
+  const now = useNow();
   const [picks, setPicks] = useState<schema.PickDoc[]>([]);
+  const [tiebreaker, setTiebreaker] = useState<schema.WeeklyTiebreakerDoc | null>(null);
+  const [tiebreakerGuesses, setTiebreakerGuesses] = useState<schema.TiebreakerGuessDoc[]>([]);
   const [loadingPicks, setLoadingPicks] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -2002,15 +2129,27 @@ export function EveryonesPicksScreen() {
     setLoadError(null);
     (async () => {
       try {
-        const data = await firebaseUtils.getVisiblePicksForWeek(leagueId, currentWeek, playerId);
-        setPicks(data);
+        const picksData = await firebaseUtils.getVisiblePicksForWeek(leagueId, currentWeek, playerId);
+        setPicks(picksData);
+        const tb = await firebaseUtils.getWeeklyTiebreaker(leagueId, currentWeek);
+        setTiebreaker(tb);
+        try {
+          const guesses = isCommissioner
+            ? await firebaseUtils.getAllTiebreakerGuessesForWeek(leagueId, currentWeek)
+            : await firebaseUtils.getVisibleTiebreakerGuessesForWeek(leagueId, currentWeek, playerId);
+          setTiebreakerGuesses(guesses);
+        } catch {
+          // Guess list needs the new visibleToAll rule/index. Don't blank
+          // the whole summary if that query isn't allowed yet.
+          setTiebreakerGuesses([]);
+        }
       } catch (err) {
         setLoadError(`Failed to load picks: ${err}`);
       } finally {
         setLoadingPicks(false);
       }
     })();
-  }, [leagueId, playerId, currentWeek]);
+  }, [leagueId, playerId, currentWeek, isCommissioner]);
 
   if (loading || loadingPicks) return <div className="p-4">Loading...</div>;
   if (loadError) return <div className="p-4 text-red-600 text-sm">{loadError}</div>;
@@ -2025,7 +2164,18 @@ export function EveryonesPicksScreen() {
   const pickByPlayerGame = new Map<string, schema.PickDoc>();
   picks.forEach((p) => pickByPlayerGame.set(`${p.playerId}_${p.gameId}`, p));
 
-  const sortedGames = [...games].sort((a, b) => a.order - b.order);
+  const guessByPlayer = new Map<string, schema.TiebreakerGuessDoc>();
+  tiebreakerGuesses.forEach((g) => guessByPlayer.set(g.playerId, g));
+
+  const sortedGames = [...games].sort((a, b) => a.order - b.order); // pick-sheet order
+  const lastGame = sortedGames.length > 0 ? sortedGames[sortedGames.length - 1] : null;
+  const lastGamePastKickoff =
+    !!lastGame && !lastGame.timeTBD && !!lastGame.gameTime && new Date(lastGame.gameTime) <= now;
+  // TB row is tied to the last pick-sheet game: hidden until that game
+  // has locked, same moment that game's picks become public.
+  const showTiebreakerRow =
+    !!lastGame && (lastGame.isLocked || lastGame.isManuallyLocked || lastGamePastKickoff);
+
   // Viewer's own column first, then the commissioner's (skipped if that's
   // the same person — a commissioner viewing their own summary just gets
   // their one column up front, no duplicate), then everyone else
@@ -2040,9 +2190,48 @@ export function EveryonesPicksScreen() {
       return a.name.localeCompare(b.name);
     });
 
+  const pointsByPlayer = new Map<string, number>();
+  sortedPlayers.forEach((p) => {
+    const total = sortedGames.reduce((sum, g) => {
+      const pick = pickByPlayerGame.get(`${p.id}_${g.id}`);
+      return sum + (pick?.isCorrect ? pick.pointsAwarded || 0 : 0);
+    }, 0);
+    pointsByPlayer.set(p.id, total);
+  });
+  const maxPoints = Math.max(0, ...Array.from(pointsByPlayer.values()));
+  const weeklyLeaders = sortedPlayers
+    .filter((p) => maxPoints > 0 && pointsByPlayer.get(p.id) === maxPoints)
+    .map((p) => p.id);
+
+  const guessValues = new Map<string, number>();
+  tiebreakerGuesses.forEach((g) => guessValues.set(g.playerId, g.guess));
+
+  // Only a real points-tie makes the TB matter. Closest guess in the whole
+  // field is not a week win — yellow is reserved for "broke the tie."
+  const wonWeekOnTiebreaker =
+    showTiebreakerRow &&
+    weeklyLeaders.length > 1 &&
+    tiebreaker?.answer !== null &&
+    tiebreaker?.answer !== undefined
+      ? new Set(
+          firebaseUtils.winningTiebreakerPlayerIds(
+            weeklyLeaders,
+            guessValues,
+            tiebreaker.answer,
+            tiebreaker.rule ?? "closest"
+          )
+        )
+      : new Set<string>();
+
   return (
     <div className="p-4">
-      <WeekSelector currentWeek={currentWeek} officialWeek={league?.currentWeek} onChange={setCurrentWeek} />
+      <WeekSelector currentWeek={currentWeek} officialWeek={league?.currentWeek} onChange={setCurrentWeek}>
+        {tiebreaker?.question && (
+          <span className="text-sm text-gray-700 leading-snug pt-1">
+            {tiebreaker.question}
+          </span>
+        )}
+      </WeekSelector>
       <h2 className="text-2xl font-bold mb-1">Weekly Summary</h2>
       <p className="text-sm text-gray-600 mb-4">
         Who picked what this week. A game's picks show up once it locks at kickoff — until then
@@ -2053,10 +2242,10 @@ export function EveryonesPicksScreen() {
         <p className="text-sm text-gray-500">No games or members yet.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="border-collapse">
+          <table className="border-collapse mx-auto text-center">
             <thead>
               <tr>
-                <th className="text-xs font-bold text-gray-600 px-1 pb-2 text-left whitespace-nowrap sticky left-0 bg-white align-bottom">
+                <th className="w-24 min-w-[6rem] text-xs font-bold text-gray-600 px-1 pb-2 whitespace-nowrap bg-white align-bottom text-center">
                   Game
                 </th>
                 {sortedPlayers.map((p) => (
@@ -2074,15 +2263,17 @@ export function EveryonesPicksScreen() {
             <tbody>
               {sortedGames.map((g) => (
                 <tr key={g.id}>
-                  <td className="p-0.5 text-xs text-gray-600 whitespace-nowrap sticky left-0 bg-white pr-2">
-                    {g.awayTeam} @ {g.homeTeam}
+                  <td className="w-24 min-w-[6rem] p-0.5 text-xs text-gray-600 bg-white" style={{ textAlign: "center" }}>
+                    <div className="flex items-center justify-center h-9 whitespace-nowrap">
+                      {g.awayTeam} @ {g.homeTeam}
+                    </div>
                   </td>
                   {sortedPlayers.map((p) => {
                     const pick = pickByPlayerGame.get(`${p.id}_${g.id}`);
                     if (!pick) {
                       return (
                         <td key={p.id} className="p-0.5">
-                          <div className="w-20 h-9 rounded flex items-center justify-center text-xs text-gray-300 border border-dashed">
+                          <div className="w-20 h-9 rounded flex items-center justify-center text-xs text-gray-300 border border-dashed mx-auto">
                             —
                           </div>
                         </td>
@@ -2095,7 +2286,7 @@ export function EveryonesPicksScreen() {
                     return (
                       <td key={p.id} className="p-0.5">
                         <div
-                          className="w-20 h-9 rounded flex items-center justify-center text-center text-xs font-bold"
+                          className="w-20 h-9 rounded flex items-center justify-center text-center text-xs font-bold mx-auto"
                           style={{
                             background: showColor ? colors.bg : "#e5e7eb",
                             color: showColor ? colors.fg : "#6b7280",
@@ -2111,15 +2302,65 @@ export function EveryonesPicksScreen() {
                   })}
                 </tr>
               ))}
+              {showTiebreakerRow && lastGame && (
+                <tr>
+                  <td className="w-24 min-w-[6rem] p-0.5 text-xs text-gray-600 bg-white" style={{ textAlign: "center" }}>
+                    <div className="flex flex-col items-center justify-center min-h-[2.25rem] leading-tight">
+                      <div className="font-bold text-gray-700 whitespace-nowrap">Tiebreaker</div>
+                      {tiebreaker?.answer !== null && tiebreaker?.answer !== undefined && (
+                        <div className="text-[10px] font-bold text-green-700">
+                          Answer: {tiebreaker.answer}
+                        </div>
+                      )}
+                      {wonWeekOnTiebreaker.size > 0 && (
+                        <div className="text-[10px] font-semibold text-yellow-800">
+                          Broke the tie
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                  {sortedPlayers.map((p) => {
+                    const guess = guessByPlayer.get(p.id);
+                    if (!guess) {
+                      return (
+                        <td key={p.id} className="p-0.5">
+                          <div className="w-20 h-9 rounded flex items-center justify-center text-xs text-gray-300 border border-dashed mx-auto">
+                            —
+                          </div>
+                        </td>
+                      );
+                    }
+                    const brokeTheTie = wonWeekOnTiebreaker.has(p.id);
+                    return (
+                      <td key={p.id} className="p-0.5">
+                        <div
+                          className={`w-20 min-h-[2.25rem] rounded flex flex-col items-center justify-center text-center text-xs font-bold mx-auto px-0.5 ${
+                            brokeTheTie
+                              ? "bg-yellow-100 text-yellow-800"
+                              : "bg-gray-100 text-gray-800"
+                          }`}
+                        >
+                          {guess.guess}
+                          {brokeTheTie && (
+                            <span className="text-[9px] font-semibold leading-none mt-0.5">Won TB</span>
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              )}
               <tr className="border-t-2">
-                <td className="p-1 text-xs font-bold text-gray-700 sticky left-0 bg-white">Total</td>
+                <td className="w-24 min-w-[6rem] p-1 text-xs font-bold text-gray-700 bg-white" style={{ textAlign: "center" }}>
+                  Total
+                </td>
                 {sortedPlayers.map((p) => {
                   const total = sortedGames.reduce((sum, g) => {
                     const pick = pickByPlayerGame.get(`${p.id}_${g.id}`);
                     return sum + (pick?.isCorrect ? pick.pointsAwarded || 0 : 0);
                   }, 0);
                   return (
-                    <td key={p.id} className="p-1 text-xs font-bold text-gray-700">
+                    <td key={p.id} className="p-1 text-xs font-bold text-gray-700 text-center">
                       {total}
                     </td>
                   );

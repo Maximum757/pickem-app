@@ -300,14 +300,82 @@ export async function recomputeGamePickCounts(leagueId: string, gameId: string):
  * (non-commissioner) accounts on broad list queries in real testing.
  */
 export async function markPicksVisibleForGame(leagueId: string, gameId: string): Promise<void> {
-  const picks = await getGamePicks(leagueId, gameId);
-  if (picks.length === 0) return;
+  const [picks, gameSnap] = await Promise.all([
+    getGamePicks(leagueId, gameId),
+    getDoc(doc(db, `leagues/${leagueId}/games`, gameId)),
+  ]);
+  if (picks.length > 0) {
+    const batch = writeBatch(db);
+    picks.forEach((p) => {
+      const pickRef = doc(db, `leagues/${leagueId}/picks`, p.id);
+      batch.update(pickRef, { visibleToAll: true });
+    });
+    await batch.commit();
+  }
+
+  const week = gameSnap.exists()
+    ? (gameSnap.data() as schema.GameDoc).week
+    : picks[0]?.week;
+  if (week !== undefined) {
+    await maybeRevealTiebreakerGuesses(leagueId, week);
+  }
+}
+
+/**
+ * If this week's last pick-sheet game (highest `order`) is locked, mark
+ * every tiebreaker guess visibleToAll. Weekly Summary's TB row is tied to
+ * that game: it only shows once the game locks, and other people's guesses
+ * are unreadable until this flag is set — same denormalized-reveal pattern
+ * as picks. Safe to call any time a game in the week locks; no-ops until
+ * the last one is actually locked.
+ */
+export async function maybeRevealTiebreakerGuesses(
+  leagueId: string,
+  week: number
+): Promise<void> {
+  const games = await getGamesForWeek(leagueId, week);
+  if (games.length === 0) return;
+  const lastGame = games[games.length - 1];
+  if (!lastGame.isLocked) return;
+
+  const guesses = await getAllTiebreakerGuessesForWeek(leagueId, week);
+  const stillHidden = guesses.filter((g) => !g.visibleToAll);
+  if (stillHidden.length === 0) return;
+
   const batch = writeBatch(db);
-  picks.forEach((p) => {
-    const pickRef = doc(db, `leagues/${leagueId}/picks`, p.id);
-    batch.update(pickRef, { visibleToAll: true });
+  stillHidden.forEach((g) => {
+    const guessRef = doc(db, `leagues/${leagueId}/tiebreakerGuesses`, g.id);
+    batch.update(guessRef, { visibleToAll: true });
   });
   await batch.commit();
+}
+
+/**
+ * Own guess (always) plus anyone else's once the last game of the week
+ * has locked and flipped visibleToAll. Two queries, same reason as
+ * getVisiblePicksForWeek: each list filter has to match its rule branch.
+ */
+export async function getVisibleTiebreakerGuessesForWeek(
+  leagueId: string,
+  week: number,
+  myPlayerId: string
+): Promise<schema.TiebreakerGuessDoc[]> {
+  const ownId = schema.getTiebreakerGuessId(myPlayerId, week);
+  const [ownSnap, visibleSnap] = await Promise.all([
+    getDoc(doc(db, `leagues/${leagueId}/tiebreakerGuesses`, ownId)),
+    getDocs(
+      query(
+        collection(db, `leagues/${leagueId}/tiebreakerGuesses`),
+        where("week", "==", week),
+        where("visibleToAll", "==", true)
+      )
+    ),
+  ]);
+
+  const byId = new Map<string, schema.TiebreakerGuessDoc>();
+  if (ownSnap.exists()) byId.set(ownSnap.id, ownSnap.data() as schema.TiebreakerGuessDoc);
+  visibleSnap.docs.forEach((d) => byId.set(d.id, d.data() as schema.TiebreakerGuessDoc));
+  return Array.from(byId.values());
 }
 
 /**
@@ -821,14 +889,18 @@ export async function submitTiebreakerGuess(
 ): Promise<void> {
   const guessId = schema.getTiebreakerGuessId(playerId, week);
   const docRef = doc(db, `leagues/${leagueId}/tiebreakerGuesses`, guessId);
-  await setDoc(docRef, {
-    id: guessId,
-    leagueId,
-    playerId,
-    week,
-    guess,
-    submittedAt: Timestamp.now(),
-  } as schema.TiebreakerGuessDoc);
+  await setDoc(
+    docRef,
+    {
+      id: guessId,
+      leagueId,
+      playerId,
+      week,
+      guess,
+      submittedAt: Timestamp.now(),
+    } as schema.TiebreakerGuessDoc,
+    { merge: true }
+  );
 }
 
 /**
@@ -890,34 +962,57 @@ export async function setWeeklyTiebreakerAnswer(
  * every player's guess), so this only ever runs from setWeeklyTiebreakerAnswer,
  * called by the commissioner.
  */
+/**
+ * Who wins a tiebreaker among a specific set of players (usually the people
+ * tied for the weekly lead). Closest overall in the field is a different
+ * question — this is the only result that actually awards the week.
+ */
+export function winningTiebreakerPlayerIds(
+  candidateIds: string[],
+  guessesByPlayer: Map<string, number>,
+  answer: number,
+  rule: "closest" | "closest_without_going_over"
+): string[] {
+  const entries = candidateIds
+    .map((playerId) => {
+      const guess = guessesByPlayer.get(playerId);
+      return guess === undefined ? null : { playerId, guess };
+    })
+    .filter((e): e is { playerId: string; guess: number } => e !== null);
+  if (entries.length === 0) return [];
+
+  if (rule === "closest_without_going_over") {
+    const notOver = entries.filter((e) => e.guess <= answer);
+    if (notOver.length > 0) {
+      const maxGuess = Math.max(...notOver.map((e) => e.guess));
+      return notOver.filter((e) => e.guess === maxGuess).map((e) => e.playerId);
+    }
+    const minOverDiff = Math.min(...entries.map((e) => e.guess - answer));
+    return entries.filter((e) => e.guess - answer === minOverDiff).map((e) => e.playerId);
+  }
+
+  const minDiff = Math.min(...entries.map((e) => Math.abs(e.guess - answer)));
+  return entries.filter((e) => Math.abs(e.guess - answer) === minDiff).map((e) => e.playerId);
+}
+
 export async function resolveTiebreakerWinner(leagueId: string, week: number): Promise<void> {
   const tiebreakerRef = doc(db, `leagues/${leagueId}/weeklyTiebreakers/${week}`);
   const tbSnap = await getDoc(tiebreakerRef);
   if (!tbSnap.exists()) return;
   const tb = tbSnap.data() as schema.WeeklyTiebreakerDoc;
-  if (tb.answer === null) return; // nothing to resolve against yet
+  if (tb.answer === null) return;
 
   const guesses = await getAllTiebreakerGuessesForWeek(leagueId, week);
   if (guesses.length === 0) return;
 
-  let winners: schema.TiebreakerGuessDoc[];
-  if (tb.rule === "closest_without_going_over") {
-    const notOver = guesses.filter((g) => g.guess <= tb.answer!);
-    if (notOver.length > 0) {
-      const maxGuess = Math.max(...notOver.map((g) => g.guess));
-      winners = notOver.filter((g) => g.guess === maxGuess);
-    } else {
-      // Everybody went over — closest-over wins, per the original rule.
-      const minOverDiff = Math.min(...guesses.map((g) => g.guess - tb.answer!));
-      winners = guesses.filter((g) => g.guess - tb.answer! === minOverDiff);
-    }
-  } else {
-    // "closest" — smallest absolute difference, either direction.
-    const minDiff = Math.min(...guesses.map((g) => Math.abs(g.guess - tb.answer!)));
-    winners = guesses.filter((g) => Math.abs(g.guess - tb.answer!) === minDiff);
-  }
-
-  await updateDoc(tiebreakerRef, { resolvedWinnerIds: winners.map((w) => w.playerId) });
+  const guessMap = new Map(guesses.map((g) => [g.playerId, g.guess]));
+  const winnerIds = winningTiebreakerPlayerIds(
+    guesses.map((g) => g.playerId),
+    guessMap,
+    tb.answer,
+    tb.rule
+  );
+  await updateDoc(tiebreakerRef, { resolvedWinnerIds: winnerIds });
 }
 
 /**
@@ -963,6 +1058,7 @@ export async function lockTiebreaker(leagueId: string, week: number): Promise<vo
         guess: mostRecent.guess,
         submittedAt: Timestamp.now(),
         carriedForward: true,
+        visibleToAll: false,
       } as schema.TiebreakerGuessDoc);
     });
     await batch.commit();
@@ -1247,6 +1343,8 @@ export async function lockAllPassedKickoffGames(leagueId: string, week: number):
   // after the batch, same as the single-game lockGame() does.
   await Promise.all(toLock.map((g) => recomputeGamePickCounts(leagueId, g.id)));
   await Promise.all(toLock.map((g) => markPicksVisibleForGame(leagueId, g.id)));
+  const weeksLocked = Array.from(new Set(toLock.map((g) => g.week)));
+  await Promise.all(weeksLocked.map((w) => maybeRevealTiebreakerGuesses(leagueId, w)));
 
   return toLock.length;
 }

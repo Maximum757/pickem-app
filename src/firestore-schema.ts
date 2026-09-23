@@ -168,8 +168,9 @@ export interface PickDoc {
  * /leagues/{leagueId}/tiebreakerGuesses/{playerId}_{week}
  * A player's own numeric guess for that week's tiebreaker question — separate
  * from WeeklyTiebreakerDoc, which holds the commissioner's question/rule and
- * (once known) the actual correct answer. Players never see `answer`; the UI
- * only ever shows them the question text and their own guess.
+ * (once known) the actual correct answer. Players always see the question
+ * text and their own guess; everyone else's guesses stay private until the
+ * last game of the week locks (see visibleToAll on TiebreakerGuessDoc).
  */
 export interface TiebreakerGuessDoc {
   id: string; // `${playerId}_${week}`
@@ -182,6 +183,11 @@ export interface TiebreakerGuessDoc {
   // never submitted one — carried forward from their most recent prior
   // week's guess. False/absent for a guess the player actually entered.
   carriedForward?: boolean;
+  // Same reveal pattern as PickDoc.visibleToAll: other players only see
+  // this guess on Weekly Summary once the week's LAST game (highest
+  // pick-sheet `order`) has locked. Set by maybeRevealTiebreakerGuesses()
+  // in firebase-utils.ts at that moment.
+  visibleToAll?: boolean;
 }
 
 /**

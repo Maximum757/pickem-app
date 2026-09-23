@@ -12,6 +12,9 @@
  * between "kickoff happens" and "picks actually reveal" stays small — not
  * instant, but not dependent on anyone opening the app either.
  *
+ * When a week's last pick-sheet game locks, also marks that week's
+ * tiebreaker guesses visibleToAll so Weekly Summary can show the TB row.
+ *
  * Also available as an on-demand manual action from the Commissioner
  * Dashboard ("Lock all games past kickoff") for anyone who wants it to
  * happen immediately rather than waiting for the next scheduled run.
@@ -52,38 +55,73 @@ async function lockPassedGames() {
     return g.gameTime.toMillis() <= now.toMillis();
   });
 
-  if (toLock.length === 0) {
+  if (toLock.length > 0) {
+    const batch = db.batch();
+    toLock.forEach((doc) => {
+      const g = doc.data();
+      console.log(`  Locking ${g.awayTeam} @ ${g.homeTeam} (week ${g.week})`);
+      batch.update(doc.ref, { isLocked: true });
+    });
+    await batch.commit();
+
+    // Mark every pick for each newly-locked game as visible — same
+    // denormalized field the app's own markPicksVisibleForGame() sets, kept
+    // in sync here since this script runs independently via GitHub Actions.
+    for (const gameDoc of toLock) {
+      const picksSnap = await db
+        .collection("leagues")
+        .doc(LEAGUE_ID)
+        .collection("picks")
+        .where("gameId", "==", gameDoc.id)
+        .get();
+      if (picksSnap.empty) continue;
+      const pickBatch = db.batch();
+      picksSnap.docs.forEach((pickDoc) => {
+        pickBatch.update(pickDoc.ref, { visibleToAll: true });
+      });
+      await pickBatch.commit();
+    }
+  }
+
+  // Tiebreaker guesses stay private until the week's last game (highest
+  // pick-sheet order) is locked — then Weekly Summary can show them.
+  // Walk every week, not just newly locked games, so a first run after
+  // this shipped also reveals guesses on weeks whose last game locked
+  // before visibleToAll existed on the guess docs.
+  let revealedWeeks = 0;
+  const allWeeks = new Set(gamesSnap.docs.map((d) => d.data().week as number));
+  for (const week of allWeeks) {
+    const weekGames = gamesSnap.docs.filter((d) => d.data().week === week);
+    if (weekGames.length === 0) continue;
+    const last = weekGames.reduce((best, d) =>
+      (d.data().order ?? 0) >= (best.data().order ?? 0) ? d : best
+    );
+    const lastLocked = last.data().isLocked || toLock.some((d) => d.id === last.id);
+    if (!lastLocked) continue;
+
+    const guessesSnap = await db
+      .collection("leagues")
+      .doc(LEAGUE_ID)
+      .collection("tiebreakerGuesses")
+      .where("week", "==", week)
+      .get();
+    if (guessesSnap.empty) continue;
+    const hidden = guessesSnap.docs.filter((guessDoc) => guessDoc.data().visibleToAll !== true);
+    if (hidden.length === 0) continue;
+    const tbBatch = db.batch();
+    hidden.forEach((guessDoc) => {
+      tbBatch.update(guessDoc.ref, { visibleToAll: true });
+    });
+    await tbBatch.commit();
+    revealedWeeks++;
+  }
+
+  if (toLock.length === 0 && revealedWeeks === 0) {
     console.log("No games need locking.");
     return;
   }
 
-  const batch = db.batch();
-  toLock.forEach((doc) => {
-    const g = doc.data();
-    console.log(`  Locking ${g.awayTeam} @ ${g.homeTeam} (week ${g.week})`);
-    batch.update(doc.ref, { isLocked: true });
-  });
-  await batch.commit();
-
-  // Mark every pick for each newly-locked game as visible — same
-  // denormalized field the app's own markPicksVisibleForGame() sets, kept
-  // in sync here since this script runs independently via GitHub Actions.
-  for (const gameDoc of toLock) {
-    const picksSnap = await db
-      .collection("leagues")
-      .doc(LEAGUE_ID)
-      .collection("picks")
-      .where("gameId", "==", gameDoc.id)
-      .get();
-    if (picksSnap.empty) continue;
-    const pickBatch = db.batch();
-    picksSnap.docs.forEach((pickDoc) => {
-      pickBatch.update(pickDoc.ref, { visibleToAll: true });
-    });
-    await pickBatch.commit();
-  }
-
-  console.log(`\nLocked ${toLock.length} game(s).`);
+  console.log(`\nLocked ${toLock.length} game(s). Revealed tiebreaker guesses for ${revealedWeeks} week(s).`);
 }
 
 lockPassedGames().catch((err) => {
