@@ -409,13 +409,13 @@ export function PicksScreen() {
             </span>
           )}
         </div>
-        {tiebreakerRule && (
-          <div className="text-xs text-gray-500 mb-1">
-            {tiebreakerRule === "closest_without_going_over"
-              ? "Price Is Right rules: closest without going over wins"
-              : "Closest guess wins (going over is fine)"}
+        {tiebreakerRule === "closest_without_going_over" ? (
+          <div className="inline-block text-sm font-bold text-amber-900 bg-amber-100 border border-amber-300 rounded px-2 py-1 mb-2">
+            Price Is Right rules in effect: closest without going over wins
           </div>
-        )}
+        ) : tiebreakerRule === "closest" ? (
+          <div className="text-xs text-gray-500 mb-1">Closest guess wins (going over is fine)</div>
+        ) : null}
         {tiebreakerAnswer !== null && (
           <div className="text-xs font-bold text-green-700 mb-3">
             Correct answer: {tiebreakerAnswer}
