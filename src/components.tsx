@@ -2109,11 +2109,10 @@ export function CommissionerDashboard() {
 // ============================================================================
 //
 // Matches the format from the real message snapshot: a colored grid of every
-// player's picks for the week that just locked, a per-player points/correct
-// recap, and the commissioner's own picks for the upcoming week as solid
-// colored bars. Built to be screenshotted directly, same as the real one —
-// no separate export/share pipeline, since a phone screenshot of this
-// section is exactly what the snapshot showed being sent.
+// player's picks for the week that just locked (with points on correct
+// cells), a weekly-results table and a separate season-standings table, and
+// the commissioner's own picks for the NEXT week as compact chips. Built to
+// be screenshotted and emailed.
 
 // ============================================================================
 // EVERYONE'S PICKS - The genuinely player-facing "who picked what" view.
@@ -2404,24 +2403,411 @@ export function EveryonesPicksScreen() {
   );
 }
 
+// Distinct, print/email-friendly line colors for the Weekly Recap progress
+// chart. Assigned by roster order so a player's color stays put when the
+// weekly ranking reshuffles.
+const PLAYER_LINE_COLORS = [
+  "#1d4ed8",
+  "#dc2626",
+  "#15803d",
+  "#b45309",
+  "#7c3aed",
+  "#0e7490",
+  "#be185d",
+  "#374151",
+  "#ca8a04",
+  "#0f766e",
+  "#9333ea",
+  "#c2410c",
+  "#2563eb",
+  "#166534",
+  "#9f1239",
+  "#0369a1",
+  "#3f6212",
+  "#9a3412",
+  "#5b21b6",
+  "#115e59",
+];
 
+function niceChartMax(value: number): number {
+  if (value <= 5) return 5;
+  if (value <= 10) return 10;
+  if (value <= 15) return 15;
+  if (value <= 20) return 20;
+  if (value <= 30) return 30;
+  if (value <= 40) return 40;
+  if (value <= 50) return 50;
+  if (value <= 80) return 80;
+  if (value <= 100) return 100;
+  return Math.ceil(value / 25) * 25;
+}
+
+function chartYTicks(max: number): number[] {
+  let step = 5;
+  if (max <= 5) step = 1;
+  else if (max <= 10) step = 2;
+  else if (max <= 20) step = 5;
+  else if (max <= 40) step = 10;
+  else if (max <= 80) step = 20;
+  else step = 25;
+  const ticks: number[] = [];
+  for (let v = 0; v <= max; v += step) ticks.push(v);
+  if (ticks[ticks.length - 1] !== max) ticks.push(max);
+  return ticks;
+}
+
+/** Catmull-Rom spline as cubic Bézier — keeps the chart a plain SVG. */
+function smoothLinePath(xs: number[], ys: number[], tension = 0.5): string {
+  if (xs.length === 0) return "";
+  const pts = xs.map((x, i) => ({ x, y: ys[i] }));
+  let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+  if (pts.length === 1) return d;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] ?? pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] ?? p2;
+    const k = tension / 6;
+    const c1x = p1.x + (p2.x - p0.x) * k;
+    const c1y = p1.y + (p2.y - p0.y) * k;
+    const c2x = p2.x - (p3.x - p1.x) * k;
+    const c2y = p2.y - (p3.y - p1.y) * k;
+    d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
+
+type RecapPickCell = { pickedTeam: string; isCorrect?: boolean; pointsAwarded?: number };
+
+function WeeklyProgressChart({
+  games,
+  rankedPlayers,
+  pickLookup,
+  colorByPlayerId,
+  width,
+  height,
+}: {
+  games: schema.UIGame[];
+  rankedPlayers: schema.PlayerDoc[];
+  pickLookup: { [playerId: string]: { [gameId: string]: RecapPickCell } };
+  colorByPlayerId: { [playerId: string]: string };
+  width: number;
+  height: number;
+}) {
+  const finalGames = games.filter((g) => g.result).sort((a, b) => a.order - b.order);
+  if (finalGames.length === 0 || rankedPlayers.length === 0) return null;
+
+  const series = rankedPlayers.map((player) => {
+    let cum = 0;
+    const values = [
+      0,
+      ...finalGames.map((g) => {
+        cum += pickLookup[player.id]?.[g.id]?.pointsAwarded || 0;
+        return cum;
+      }),
+    ];
+    return {
+      player,
+      color: colorByPlayerId[player.id] || PLAYER_LINE_COLORS[0],
+      values,
+      label: player.name.length > 18 ? `${player.name.slice(0, 17)}…` : player.name,
+      total: values[values.length - 1] ?? 0,
+    };
+  });
+
+  // Players with identical point paths draw exactly on top of each other,
+  // so each one in a shared path gets an interleaved dash of its own color.
+  const DASH = 8;
+  const sharedPaths = new Map<string, string[]>();
+  series.forEach((s) => {
+    const key = s.values.join(",");
+    sharedPaths.set(key, [...(sharedPaths.get(key) || []), s.player.id]);
+  });
+  const dashFor = (s: (typeof series)[number]) => {
+    const group = sharedPaths.get(s.values.join(",")) || [];
+    if (group.length < 2) return null;
+    const idx = group.indexOf(s.player.id);
+    return {
+      dasharray: `${DASH} ${DASH * (group.length - 1)}`,
+      dashoffset: -idx * DASH,
+      sharedWith: group.length - 1,
+    };
+  };
+
+  const yMax = niceChartMax(Math.max(1, ...series.flatMap((s) => s.values)));
+  const yTicks = chartYTicks(yMax);
+
+  const W = width;
+  const H = height;
+  const padL = 48;
+  const padR = 230;
+  const padT = 20;
+  const padB = 40;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const xStep = innerW / finalGames.length;
+
+  const xAt = (i: number) => padL + i * xStep;
+  const yAt = (v: number) => padT + innerH - (v / yMax) * innerH;
+
+  // End-of-line name labels sit as close to each player's last dot as they
+  // can: labels that would collide merge into a block centered on the
+  // average of their dots, so the nudge is split up and down evenly.
+  const LABEL_GAP = 20;
+  const lastIdx = finalGames.length;
+  const endLabels = series
+    .map((s) => ({ s, dotY: yAt(s.total), y: yAt(s.total) }))
+    .sort((a, b) => a.dotY - b.dotY || b.s.total - a.s.total);
+  const labelTop = padT;
+  const labelBottom = H - padB;
+  type LabelBlock = { items: typeof endLabels; top: number };
+  const placeBlock = (items: typeof endLabels): LabelBlock => {
+    const center = items.reduce((sum, l) => sum + l.dotY, 0) / items.length;
+    const span = (items.length - 1) * LABEL_GAP;
+    const top = Math.min(Math.max(center - span / 2, labelTop), labelBottom - span);
+    return { items, top };
+  };
+  const blocks: LabelBlock[] = [];
+  endLabels.forEach((label) => {
+    blocks.push(placeBlock([label]));
+    while (blocks.length > 1) {
+      const cur = blocks[blocks.length - 1];
+      const prev = blocks[blocks.length - 2];
+      if (prev.top + prev.items.length * LABEL_GAP <= cur.top) break;
+      blocks.splice(-2, 2, placeBlock([...prev.items, ...cur.items]));
+    }
+  });
+  blocks.forEach((b) => b.items.forEach((l, i) => (l.y = b.top + i * LABEL_GAP)));
+
+  return (
+        <svg
+          width={W}
+          height={H}
+          viewBox={`0 0 ${W} ${H}`}
+          className="block"
+          role="img"
+          aria-label="Cumulative weekly points after each final, in pick-sheet order"
+        >
+          <title>Cumulative weekly points after each final</title>
+          {yTicks.map((tick) => {
+            const y = yAt(tick);
+            return (
+              <g key={tick}>
+                <line
+                  x1={padL}
+                  y1={y}
+                  x2={W - padR}
+                  y2={y}
+                  stroke="#e5e7eb"
+                  strokeWidth={1}
+                />
+                <text
+                  x={padL - 8}
+                  y={y + 4}
+                  textAnchor="end"
+                  fill="#6b7280"
+                  fontSize={14}
+                  fontFamily="system-ui, sans-serif"
+                >
+                  {tick}
+                </text>
+              </g>
+            );
+          })}
+          {/* Draw lower-ranked lines first so the leader sits on top. */}
+          {[...series].reverse().map((s) => {
+            const xs = s.values.map((_, i) => xAt(i));
+            const ys = s.values.map((v) => yAt(v));
+            const dash = dashFor(s);
+            return (
+              <g key={s.player.id}>
+                {s.values.length > 1 && (
+                  <path
+                    d={smoothLinePath(xs, ys)}
+                    fill="none"
+                    stroke={s.color}
+                    strokeWidth={dash ? 4 : 3}
+                    strokeLinejoin="round"
+                    strokeLinecap="butt"
+                    strokeDasharray={dash?.dasharray}
+                    strokeDashoffset={dash?.dashoffset}
+                  />
+                )}
+                {s.values.map((v, i) =>
+                  i === 0 ? null : (
+                    <circle key={finalGames[i - 1].id} cx={xAt(i)} cy={yAt(v)} r={4} fill={s.color} />
+                  )
+                )}
+              </g>
+            );
+          })}
+          <circle cx={xAt(0)} cy={yAt(0)} r={3.5} fill="#6b7280" />
+          <text
+            x={xAt(0)}
+            y={H - 12}
+            textAnchor="middle"
+            fill="#6b7280"
+            fontSize={13}
+            fontFamily="system-ui, sans-serif"
+          >
+            Start
+          </text>
+          {finalGames.map((g, i) => (
+            <text
+              key={g.id}
+              x={xAt(i + 1)}
+              y={H - 12}
+              textAnchor="middle"
+              fill="#374151"
+              fontSize={14}
+              fontWeight={600}
+              fontFamily="system-ui, sans-serif"
+            >
+              {g.result?.winner || `${g.awayTeam}@${g.homeTeam}`}
+            </text>
+          ))}
+          {endLabels.map(({ s, dotY, y }) => {
+            const x = xAt(lastIdx);
+            return (
+              <g key={s.player.id}>
+                {Math.abs(y - dotY) > 1 && (
+                  <line x1={x + 6} y1={dotY} x2={x + 30} y2={y} stroke={s.color} strokeWidth={1.25} />
+                )}
+                <text
+                  x={x + 34}
+                  y={y + 5}
+                  fill={s.color}
+                  fontSize={15}
+                  fontWeight={600}
+                  fontFamily="system-ui, sans-serif"
+                >
+                  {s.label}
+                  <tspan fill="#111827" fontWeight={700} dx={5}>
+                    {s.total}
+                  </tspan>
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+  );
+}
+
+export function WeekProgressScreen() {
+  const { leagueId, playerId, games, players, currentWeek, setCurrentWeek, league, loading } = useLeague();
+  const [picks, setPicks] = useState<schema.PickDoc[]>([]);
+  const [loadingPicks, setLoadingPicks] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [chartBox, setChartBox] = useState<HTMLDivElement | null>(null);
+  const [chartSize, setChartSize] = useState({ width: 0, height: 0 });
+
+  React.useEffect(() => {
+    if (!chartBox) return;
+    const measure = () =>
+      setChartSize({
+        width: chartBox.clientWidth,
+        height: Math.max(1400, Math.round(window.innerHeight * 1.4)),
+      });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(chartBox);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [chartBox]);
+
+  React.useEffect(() => {
+    if (!leagueId || !playerId) return;
+    setLoadingPicks(true);
+    setLoadError(null);
+    firebaseUtils
+      .getVisiblePicksForWeek(leagueId, currentWeek, playerId)
+      .then(setPicks)
+      .catch((err) => setLoadError(`Failed to load picks: ${err}`))
+      .finally(() => setLoadingPicks(false));
+  }, [leagueId, playerId, currentWeek]);
+
+  const activePlayers = players.filter((p) => !p.removedFromLeague);
+  const colorByPlayerId: { [playerId: string]: string } = {};
+  activePlayers.forEach((p, i) => {
+    colorByPlayerId[p.id] = PLAYER_LINE_COLORS[i % PLAYER_LINE_COLORS.length];
+  });
+
+  const pickLookup: { [playerId: string]: { [gameId: string]: RecapPickCell } } = {};
+  picks.forEach((p) => {
+    if (!pickLookup[p.playerId]) pickLookup[p.playerId] = {};
+    pickLookup[p.playerId][p.gameId] = {
+      pickedTeam: p.pickedTeam,
+      isCorrect: p.isCorrect,
+      pointsAwarded: p.pointsAwarded,
+    };
+  });
+
+  const weekPoints = (id: string) =>
+    Object.values(pickLookup[id] || {}).reduce((sum, p) => sum + (p.pointsAwarded || 0), 0);
+  const rankedPlayers = [...activePlayers].sort(
+    (a, b) => weekPoints(b.id) - weekPoints(a.id) || a.name.localeCompare(b.name)
+  );
+  const hasFinals = games.some((g) => g.result);
+
+  return (
+    <div className="p-4">
+      <WeekSelector currentWeek={currentWeek} officialWeek={league?.currentWeek} onChange={setCurrentWeek} />
+      <h2 className="text-2xl font-bold mb-1">Week {currentWeek} Progress</h2>
+      <p className="text-sm text-gray-600 mb-4">Running point totals after each final, in pick-sheet order.</p>
+      {loading || loadingPicks ? (
+        <div className="text-sm text-gray-600">Loading...</div>
+      ) : loadError ? (
+        <div className="text-sm text-red-600">{loadError}</div>
+      ) : !hasFinals ? (
+        <div className="text-sm text-gray-600">No finals yet this week.</div>
+      ) : (
+        <div ref={setChartBox} className="border rounded bg-white overflow-hidden">
+          {chartSize.width > 0 && (
+            <WeeklyProgressChart
+              games={games}
+              rankedPlayers={rankedPlayers}
+              pickLookup={pickLookup}
+              colorByPlayerId={colorByPlayerId}
+              width={chartSize.width}
+              height={chartSize.height}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function WeeklySummary() {
-  const { leagueId, players, standings, currentWeek, userPicks, games } = useLeague();
+  const { leagueId, playerId, players, standings, currentWeek } = useLeague();
   const [summaryWeek, setSummaryWeek] = useState(currentWeek);
   const [summaryGames, setSummaryGames] = useState<schema.UIGame[]>([]);
   const [summaryPicks, setSummaryPicks] = useState<schema.PickDoc[]>([]);
+  const [nextWeekGames, setNextWeekGames] = useState<schema.UIGame[]>([]);
+  const [nextWeekPickByGame, setNextWeekPickByGame] = useState<{ [gameId: string]: string }>({});
+  const [weekTiebreaker, setWeekTiebreaker] = useState<schema.WeeklyTiebreakerDoc | null>(null);
+  const [weekTbGuesses, setWeekTbGuesses] = useState<schema.TiebreakerGuessDoc[]>([]);
   const [loadingSummary, setLoadingSummary] = useState(false);
+  const nextWeek = summaryWeek + 1;
 
   React.useEffect(() => {
     if (!leagueId) return;
     setLoadingSummary(true);
     (async () => {
-      const [gamesData, picksData] = await Promise.all([
+      const [gamesData, picksData, upcomingGames, myUpcomingPicks, tb, guesses] = await Promise.all([
         firebaseUtils.getGamesForWeek(leagueId, summaryWeek),
         firebaseUtils.getAllPicksForWeek(leagueId, summaryWeek),
+        firebaseUtils.getGamesForWeek(leagueId, nextWeek),
+        playerId
+          ? firebaseUtils.getPlayerWeeklyPicks(leagueId, playerId, nextWeek)
+          : Promise.resolve([] as schema.PickDoc[]),
+        firebaseUtils.getWeeklyTiebreaker(leagueId, summaryWeek),
+        firebaseUtils.getAllTiebreakerGuessesForWeek(leagueId, summaryWeek).catch(() => [] as schema.TiebreakerGuessDoc[]),
       ]);
-      setSummaryGames(gamesData.map((g) => ({
+      const toUIGame = (g: schema.GameDoc): schema.UIGame => ({
         id: g.id,
         week: g.week,
         order: g.order,
@@ -2432,38 +2818,95 @@ export function WeeklySummary() {
         timeTBD: g.timeTBD,
         isLocked: g.isLocked,
         result: g.result,
-      })));
+      });
+      setSummaryGames(gamesData.map(toUIGame).sort((a, b) => a.order - b.order));
       setSummaryPicks(picksData);
+      setNextWeekGames(upcomingGames.map(toUIGame).sort((a, b) => a.order - b.order));
+      const upcomingMap: { [gameId: string]: string } = {};
+      myUpcomingPicks.forEach((p) => {
+        upcomingMap[p.gameId] = p.pickedTeam;
+      });
+      setNextWeekPickByGame(upcomingMap);
+      setWeekTiebreaker(tb);
+      setWeekTbGuesses(guesses);
       setLoadingSummary(false);
     })();
-  }, [leagueId, summaryWeek]);
+  }, [leagueId, playerId, summaryWeek, nextWeek]);
 
-  // playerId -> gameId -> pickedTeam, for the grid
-  // playerId -> gameId -> { pickedTeam, isCorrect }, for the grid — carries
-  // correctness through so cells can show green/red like the picks screen,
-  // not just the flat team color.
+  const recapPlayers = players.filter((p) => !p.removedFromLeague);
+
   const pickLookup: {
-    [playerId: string]: { [gameId: string]: { pickedTeam: string; isCorrect?: boolean } };
+    [playerId: string]: {
+      [gameId: string]: { pickedTeam: string; isCorrect?: boolean; pointsAwarded?: number };
+    };
   } = {};
   summaryPicks.forEach((p) => {
     if (!pickLookup[p.playerId]) pickLookup[p.playerId] = {};
-    pickLookup[p.playerId][p.gameId] = { pickedTeam: p.pickedTeam, isCorrect: p.isCorrect };
+    pickLookup[p.playerId][p.gameId] = {
+      pickedTeam: p.pickedTeam,
+      isCorrect: p.isCorrect,
+      pointsAwarded: p.pointsAwarded,
+    };
   });
 
-  // Per-player recap for this week: points earned, games correct
-  const recap = players.map((player) => {
+  const tbGuessByPlayer = new Map<string, number>();
+  weekTbGuesses.forEach((g) => tbGuessByPlayer.set(g.playerId, g.guess));
+
+  function tiebreakerDistance(playerId: string): number {
+    const answer = weekTiebreaker?.answer;
+    if (answer === null || answer === undefined) return Number.POSITIVE_INFINITY;
+    const guess = tbGuessByPlayer.get(playerId);
+    if (guess === undefined) return Number.POSITIVE_INFINITY;
+    if (weekTiebreaker?.rule === "closest_without_going_over") {
+      if (guess <= answer) return answer - guess;
+      return 1_000_000 + (guess - answer);
+    }
+    return Math.abs(guess - answer);
+  }
+
+  const weeklyResults = recapPlayers.map((player) => {
     const theirPicks = summaryPicks.filter((p) => p.playerId === player.id);
     const points = theirPicks.reduce((sum, p) => sum + (p.pointsAwarded || 0), 0);
     const correct = theirPicks.filter((p) => p.isCorrect).length;
-    const standing = standings.find((s) => s.playerId === player.id);
-    return { player, points, correct, rank: standing?.rank };
+    return { player, points, correct };
   });
-  recap.sort((a, b) => b.points - a.points);
+  weeklyResults.sort(
+    (a, b) =>
+      b.points - a.points ||
+      tiebreakerDistance(a.player.id) - tiebreakerDistance(b.player.id) ||
+      b.correct - a.correct ||
+      a.player.name.localeCompare(b.player.name)
+  );
+
+  const tiedAtTop =
+    weeklyResults.length >= 2 &&
+    weeklyResults[0].points > 0 &&
+    weeklyResults[0].points === weeklyResults[1].points;
+  const tbWinnerIds = new Set<string>();
+  if (tiedAtTop) {
+    const topPoints = weeklyResults[0].points;
+    const tiedIds = weeklyResults.filter((r) => r.points === topPoints).map((r) => r.player.id);
+    const fromGuesses =
+      weekTiebreaker?.answer !== null && weekTiebreaker?.answer !== undefined
+        ? firebaseUtils.winningTiebreakerPlayerIds(
+            tiedIds,
+            tbGuessByPlayer,
+            weekTiebreaker.answer,
+            weekTiebreaker.rule ?? "closest"
+          )
+        : [];
+    const fromDoc = weekTiebreaker?.resolvedWinnerIds || [];
+    [...fromGuesses, ...fromDoc, weeklyResults[0].player.id].forEach((id) => {
+      if (tiedIds.includes(id)) tbWinnerIds.add(id);
+    });
+  }
+
+  const seasonRows = standings.filter((s) => recapPlayers.some((p) => p.id === s.playerId));
+  const nextWeekPickedGames = nextWeekGames.filter((g) => nextWeekPickByGame[g.id]);
 
   return (
     <div className="p-4 max-w-6xl">
-      <h2 className="text-2xl font-bold mb-1">Weekly Recap</h2>
-      <p className="text-sm text-gray-600 mb-4">Screenshot this to send out</p>
+      <h2 className="text-2xl font-bold mb-3">Weekly Recap</h2>
 
       <WeekSelector currentWeek={summaryWeek} officialWeek={currentWeek} onChange={setSummaryWeek} />
 
@@ -2473,14 +2916,14 @@ export function WeeklySummary() {
         <>
           {/* Everyone's picks, color-coded, for the week that just locked */}
           <div className="mb-6 overflow-x-auto border rounded">
-            <table className="text-xs border-collapse w-full">
+            <table className="text-xs border-collapse table-fixed">
               <thead>
                 <tr>
-                  <th className="p-1 bg-gray-100 sticky left-0 text-left">Game</th>
-                  {players.map((p) => (
+                  <th className="p-1 bg-gray-100 sticky left-0 text-left w-20">Game</th>
+                  {recapPlayers.map((p) => (
                     <th
                       key={p.id}
-                      className="p-1 bg-gray-100 text-center whitespace-nowrap"
+                      className="p-1 bg-gray-100 text-center whitespace-nowrap w-12"
                       title={p.name}
                     >
                       {p.shortName || p.name.slice(0, 5)}
@@ -2494,18 +2937,21 @@ export function WeeklySummary() {
                     <td className="p-1 font-semibold whitespace-nowrap sticky left-0 bg-white">
                       {g.awayTeam}@{g.homeTeam}
                     </td>
-                    {players.map((p) => {
+                    {recapPlayers.map((p) => {
                       const pick = pickLookup[p.id]?.[g.id];
                       if (!pick) {
                         return (
-                          <td key={p.id} className="p-1 text-center text-gray-300">
-                            —
+                          <td key={p.id} className="p-0.5">
+                            <div className="w-12 h-9 box-border border-2 border-dashed border-gray-200 rounded flex items-center justify-center text-[10px] text-gray-300 mx-auto">
+                              —
+                            </div>
                           </td>
                         );
                       }
                       const colors = getTeamColor(pick.pickedTeam);
-                      // Only borders once the game's actually final —
-                      // isCorrect is undefined until scoreWeek() has run.
+                      const isFinal = !!g.result;
+                      const showPoints =
+                        isFinal && pick.isCorrect === true && pick.pointsAwarded !== undefined;
                       const borderColor =
                         pick.isCorrect === true
                           ? "#16a34a"
@@ -2515,14 +2961,17 @@ export function WeeklySummary() {
                       return (
                         <td key={p.id} className="p-0.5">
                           <div
-                            className="font-bold text-center rounded px-1 py-0.5"
+                            className="w-12 h-9 box-border border-2 rounded flex flex-col items-center justify-center leading-none mx-auto"
                             style={{
                               background: colors.bg,
                               color: colors.fg,
-                              border: `2px solid ${borderColor}`,
+                              borderColor,
                             }}
                           >
-                            {pick.pickedTeam}
+                            <span className="text-[10px] font-bold">{pick.pickedTeam}</span>
+                            {showPoints && (
+                              <span className="text-[9px] font-semibold">({pick.pointsAwarded})</span>
+                            )}
                           </div>
                         </td>
                       );
@@ -2533,57 +2982,94 @@ export function WeeklySummary() {
             </table>
           </div>
 
-          {/* Points / correct picks recap for the week, plus current overall rank */}
-          <div className="mb-8 border rounded overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="text-left p-2">Player</th>
-                  <th className="text-right p-2">Points</th>
-                  <th className="text-right p-2">Correct</th>
-                  <th className="text-right p-2">Overall Rank</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recap.map((r) => (
-                  <tr key={r.player.id} className="border-t">
-                    <td className="p-2">{r.player.name}</td>
-                    <td className="p-2 text-right font-semibold">{r.points}</td>
-                    <td className="p-2 text-right">{r.correct}</td>
-                    <td className="p-2 text-right">{r.rank ?? "—"}</td>
+          <div className="mb-8 grid grid-cols-2 gap-3 items-start">
+            <div className="border rounded overflow-hidden min-w-0">
+              <div className="bg-gray-100 px-2 py-1.5 text-xs font-bold">Week {summaryWeek} results</div>
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left p-1.5 w-6">#</th>
+                    <th className="text-left p-1.5">Player</th>
+                    <th className="text-right p-1.5">Pts</th>
+                    <th className="text-right p-1.5">W</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {weeklyResults.map((r, i) => (
+                    <tr key={r.player.id} className="border-t">
+                      <td className="p-1.5 text-gray-500">{i + 1}</td>
+                      <td className="p-1.5 max-w-[9rem]">
+                        <div className="truncate" title={r.player.name}>
+                          {r.player.name}
+                        </div>
+                        {tbWinnerIds.has(r.player.id) && (
+                          <div className="text-[10px] font-bold text-gray-800 leading-tight whitespace-nowrap">
+                            Won on tiebreaker
+                          </div>
+                        )}
+                      </td>
+                      <td className="p-1.5 text-right font-semibold">{r.points}</td>
+                      <td className="p-1.5 text-right">{r.correct}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="border rounded overflow-hidden min-w-0">
+              <div className="bg-gray-100 px-2 py-1.5 text-xs font-bold">Season standings</div>
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left p-1.5 w-6">#</th>
+                    <th className="text-left p-1.5">Player</th>
+                    <th className="text-right p-1.5">Pts</th>
+                    <th className="text-right p-1.5">W</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {seasonRows.map((s) => (
+                    <tr key={s.playerId} className="border-t">
+                      <td className="p-1.5 text-gray-500">{s.rank}</td>
+                      <td className="p-1.5 max-w-[7.5rem] truncate" title={s.playerName}>
+                        {s.playerName}
+                      </td>
+                      <td className="p-1.5 text-right font-semibold">{s.totalPoints}</td>
+                      <td className="p-1.5 text-right">{s.totalCorrect}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}
 
-      {/* Commissioner's own picks for the upcoming (still-open) week — solid
-          colored bars, matching the real message format exactly. */}
-      <h3 className="text-lg font-bold mb-2">My Week {currentWeek} Picks:</h3>
-      <div className="rounded overflow-hidden border">
-        {games
-          .filter((g) => userPicks[g.id])
-          .map((g) => {
-            const pick = userPicks[g.id];
+      <h3 className="text-sm font-bold mb-1">My Week {nextWeek} Picks</h3>
+      {nextWeekPickedGames.length === 0 ? (
+        <div className="text-xs text-gray-500 mb-4">
+          {nextWeekGames.length === 0
+            ? `No Week ${nextWeek} games yet.`
+            : `No picks made yet for Week ${nextWeek}.`}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-px w-20 mb-4">
+          {nextWeekPickedGames.map((g) => {
+            const pick = nextWeekPickByGame[g.id];
             const colors = getTeamColor(pick);
             return (
               <div
                 key={g.id}
-                className="text-3xl font-extrabold text-center py-4"
+                className="text-[11px] font-bold text-center py-0.5"
                 style={{ background: colors.bg, color: colors.fg }}
+                title={`${g.awayTeam} @ ${g.homeTeam}`}
               >
                 {pick}
               </div>
             );
           })}
-        {games.filter((g) => userPicks[g.id]).length === 0 && (
-          <div className="p-4 text-sm text-gray-500 text-center">
-            No picks made yet for Week {currentWeek}
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2592,7 +3078,7 @@ export function WeeklySummary() {
 // MAIN APP COMPONENT
 // ============================================================================
 
-type ViewType = "picks" | "mysummary" | "everyonespicks" | "standings" | "payouts" | "commissioner" | "summary" | "members";
+type ViewType = "picks" | "mysummary" | "everyonespicks" | "progress" | "standings" | "payouts" | "commissioner" | "summary" | "members";
 
 // ============================================================================
 // MEMBERS SCREEN - Roster with contact info and dues tracking (commissioner only)
@@ -2994,6 +3480,16 @@ export function App() {
               Weekly Summary
             </button>
             <button
+              onClick={() => setView("progress")}
+              className={`py-2 px-4 rounded font-medium transition ${
+                view === "progress"
+                  ? "bg-blue-500 text-white"
+                  : "bg-gray-200 hover:bg-gray-300"
+              }`}
+            >
+              Week Progress
+            </button>
+            <button
               onClick={() => setView("standings")}
               className={`py-2 px-4 rounded font-medium transition ${
                 view === "standings"
@@ -3064,6 +3560,7 @@ export function App() {
         {!loading && view === "summary" && isCommissioner && <WeeklySummary />}
         {!loading && view === "members" && isCommissioner && <MembersScreen />}
       </div>
+      {!loading && view === "progress" && <WeekProgressScreen />}
     </div>
   );
 }
