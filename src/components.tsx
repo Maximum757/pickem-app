@@ -366,7 +366,9 @@ export function PicksScreen() {
         <div className="text-right">
           <div
             className={`text-xs font-bold px-2 py-1 rounded-full inline-block ${
-              picksComplete ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+              picksComplete && myTiebreakerGuess !== null
+                ? "bg-green-100 text-green-700"
+                : "bg-amber-100 text-amber-700"
             }`}
           >
             {picksMade} / {totalGames} picked
