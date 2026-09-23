@@ -124,6 +124,15 @@ export interface GameDoc {
   isManuallyLocked?: boolean; // Commissioner override to lock a TBD game before gameTime is ever set
   awaySpread?: string; // e.g. "+3.5" — informational only pre-lock, has zero bearing on scoring
   homeSpread?: string;
+  // Written by the free ESPN scoreboard poller while a game is in progress.
+  // Cleared once a final result is stored. Display-only — scoring uses `result`.
+  live?: {
+    awayScore: number;
+    homeScore: number;
+    status: "in_progress" | "final";
+    detail: string; // ESPN shortDetail, e.g. "Q3 4:12"
+    updatedAt: Timestamp;
+  };
   result?: {
     winner: string;
     loser: string;
@@ -470,6 +479,12 @@ export interface UIGame {
   playoffMultiplier: number;
   awaySpread?: string;
   homeSpread?: string;
+  live?: {
+    awayScore: number;
+    homeScore: number;
+    status: "in_progress" | "final";
+    detail: string;
+  };
   result?: {
     winner: string;
     loser: string;

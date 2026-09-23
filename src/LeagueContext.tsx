@@ -94,6 +94,14 @@ function mapGameDocToUIGame(
     awaySpread: g.awaySpread,
     homeSpread: g.homeSpread,
     pickCounts,
+    live: g.live
+      ? {
+          awayScore: g.live.awayScore,
+          homeScore: g.live.homeScore,
+          status: g.live.status,
+          detail: g.live.detail,
+        }
+      : undefined,
     result: g.result
       ? {
           winner: g.result.winner,

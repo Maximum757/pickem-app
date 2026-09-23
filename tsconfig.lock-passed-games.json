@@ -7,5 +7,5 @@
     "types": ["node"],
     "outDir": "./dist-lock-passed-games"
   },
-  "include": ["lock-passed-games.ts"]
+  "include": ["lock-passed-games.ts", "pick-em-engine.ts"]
 }

@@ -23,14 +23,35 @@ import * as schema from "./firestore-schema";
 function formatKickoff(date: Date): string {
   return (
     date.toLocaleString(undefined, {
-      timeZone: "America/New_York",
-      month: "numeric",
+      weekday: "short",
+      month: "short",
       day: "numeric",
-      year: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZone: "America/New_York",
     }) + " ET"
   );
+}
+
+function finalScoreLine(game: schema.UIGame): string | null {
+  const r = game.result;
+  if (!r) return null;
+  const hasScore = (r.winnerScore || 0) > 0 || (r.loserScore || 0) > 0;
+  if (!hasScore) return `Final · ${r.winner}`;
+  const awayScore = r.winner === game.awayTeam ? r.winnerScore : r.loserScore;
+  const homeScore = r.winner === game.homeTeam ? r.winnerScore : r.loserScore;
+  return `Final · ${game.awayTeam} ${awayScore}–${homeScore} ${game.homeTeam}`;
+}
+
+function gameTimeOrScoreLabel(game: schema.UIGame): string {
+  const finalLine = finalScoreLine(game);
+  if (finalLine) return finalLine;
+  if (game.live) {
+    const clock = game.live.detail ? ` · ${game.live.detail}` : "";
+    return `${game.awayTeam} ${game.live.awayScore}–${game.live.homeScore} ${game.homeTeam}${clock}`;
+  }
+  if (game.timeTBD || !game.gameTime) return "Time TBD";
+  return formatKickoff(new Date(game.gameTime));
 }
 
 // React only re-runs a component's render when something actually triggers
@@ -459,14 +480,15 @@ export function PicksScreen() {
           return (
             <div key={game.id} className="border rounded-lg p-3 bg-white">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-gray-600">
-                  {game.timeTBD || !game.gameTime
-                    ? "Time TBD"
-                    : formatKickoff(new Date(game.gameTime))}
-                </span>
-                {isLocked && (
+                <span className="text-xs text-gray-600">{gameTimeOrScoreLabel(game)}</span>
+                {isLocked && !game.live && (
                   <span className="text-[10px] font-semibold uppercase tracking-wide bg-gray-100 border border-gray-300 text-gray-600 rounded-full px-2 py-0.5">
                     Locked
+                  </span>
+                )}
+                {game.live && !isFinal && (
+                  <span className="text-[10px] font-semibold uppercase tracking-wide bg-blue-100 text-blue-800 rounded-full px-2 py-0.5">
+                    Live
                   </span>
                 )}
                 {isFinal && (
@@ -1665,8 +1687,9 @@ export function CommissionerDashboard() {
         <h3 className="text-lg font-bold mb-1">Enter Game Results</h3>
         <p className="text-sm text-gray-600 mb-4">
           Tap the winning team — that's it, saves and scores immediately. Games
-          you can't click yet are still open for picks; they unlock here the
-          moment kickoff passes.
+          you can't click yet are still open for picks. Kickoff lock and finals
+          also come in from ESPN on game days; use this if that hasn't caught
+          up yet, or tap Wrong? Fix it if the auto result is off.
         </p>
 
         <div className="mb-4 flex items-center gap-2">
@@ -1686,7 +1709,7 @@ export function CommissionerDashboard() {
           </button>
           <span className="text-xs text-gray-500">
             {lastLockResult ||
-              "Games also lock automatically in the background every ~10 minutes — this does it immediately."}
+              "On game days a background job locks kickoffs and enters ESPN finals — this does the lock immediately."}
           </span>
         </div>
 
@@ -2264,8 +2287,15 @@ export function EveryonesPicksScreen() {
               {sortedGames.map((g) => (
                 <tr key={g.id}>
                   <td className="w-24 min-w-[6rem] p-0.5 text-xs text-gray-600 bg-white" style={{ textAlign: "center" }}>
-                    <div className="flex items-center justify-center h-9 whitespace-nowrap">
-                      {g.awayTeam} @ {g.homeTeam}
+                    <div className="flex flex-col items-center justify-center min-h-[2.25rem] leading-tight py-0.5">
+                      <div className="whitespace-nowrap">{g.awayTeam} @ {g.homeTeam}</div>
+                      {g.result && (g.result.winnerScore > 0 || g.result.loserScore > 0) && (
+                        <div className="text-[10px] font-semibold text-gray-800">
+                          {g.result.winner === g.awayTeam ? g.result.winnerScore : g.result.loserScore}
+                          –
+                          {g.result.winner === g.homeTeam ? g.result.winnerScore : g.result.loserScore}
+                        </div>
+                      )}
                     </div>
                   </td>
                   {sortedPlayers.map((p) => {

@@ -2,12 +2,13 @@ name: Auto-lock games at kickoff
 
 on:
   schedule:
-    # Every 10 minutes, all day — the actual mechanism behind "games lock
-    # automatically at kickoff." Picks are already blocked at kickoff
-    # regardless (that's enforced in the security rules, not this job),
-    # but revealing other players' picks in Weekly Summary depends on the
-    # isLocked field genuinely being true, which nothing else sets.
-    - cron: "*/10 * * * *"
+    # Game windows only (UTC). ESPN + lock writes are free; GitHub minutes
+    # are not unlimited on a private repo, so this does not poll at 3am
+    # Tuesday. workflow_dispatch still works any time.
+    # Sat/Sun 1pm–7pm ET and later (London-ish through late afternoon)
+    - cron: "*/15 13-23 * * 0,6"
+    # Sun/Mon/Thu night games spilling into the next UTC morning
+    - cron: "*/15 0-5 * * 1,2,5"
   workflow_dispatch: {} # trigger manually from the Actions tab too
 
 jobs:
@@ -19,6 +20,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: npm
 
       - run: npm install
 
@@ -27,12 +29,19 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
 
+      - name: Require Firebase credentials
+        run: |
+          if [ ! -s serviceAccountKey.json ] || ! grep -q "private_key" serviceAccountKey.json; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT_JSON is missing or empty. Repo Settings → Secrets and variables → Actions — add the Firebase service-account JSON. Until that exists this job cannot lock or score anything."
+            exit 1
+          fi
+
       - name: Write .env.local
         run: |
           echo "FIREBASE_SERVICE_ACCOUNT_PATH=./serviceAccountKey.json" >> .env.local
           echo "REACT_APP_LEAGUE_ID=${{ vars.REACT_APP_LEAGUE_ID || 'week0-test-league' }}" >> .env.local
 
-      - name: Lock passed-kickoff games
+      - name: Lock kickoffs and sync ESPN scores
         run: npm run lock:passed-games
 
       - name: Clean up credentials
