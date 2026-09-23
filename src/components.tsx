@@ -2916,14 +2916,14 @@ export function WeeklySummary() {
         <>
           {/* Everyone's picks, color-coded, for the week that just locked */}
           <div className="mb-6 overflow-x-auto border rounded">
-            <table className="text-xs border-collapse table-fixed">
+            <table className="w-full text-xs border-collapse table-fixed">
               <thead>
                 <tr>
                   <th className="p-1 bg-gray-100 sticky left-0 text-left w-20">Game</th>
                   {recapPlayers.map((p) => (
                     <th
                       key={p.id}
-                      className="p-1 bg-gray-100 text-center whitespace-nowrap w-12"
+                      className="px-0 py-1 bg-gray-100 text-center whitespace-nowrap overflow-hidden"
                       title={p.name}
                     >
                       {p.shortName || p.name.slice(0, 5)}
@@ -2942,7 +2942,7 @@ export function WeeklySummary() {
                       if (!pick) {
                         return (
                           <td key={p.id} className="p-0.5">
-                            <div className="w-12 h-9 box-border border-2 border-dashed border-gray-200 rounded flex items-center justify-center text-[10px] text-gray-300 mx-auto">
+                            <div className="w-full h-9 box-border border-2 border-dashed border-gray-200 rounded flex items-center justify-center text-[10px] text-gray-300 mx-auto">
                               —
                             </div>
                           </td>
@@ -2961,7 +2961,7 @@ export function WeeklySummary() {
                       return (
                         <td key={p.id} className="p-0.5">
                           <div
-                            className="w-12 h-9 box-border border-2 rounded flex flex-col items-center justify-center leading-none mx-auto"
+                            className="w-full h-9 box-border border-2 rounded flex flex-col items-center justify-center leading-none mx-auto"
                             style={{
                               background: colors.bg,
                               color: colors.fg,
@@ -3480,16 +3480,6 @@ export function App() {
               Weekly Summary
             </button>
             <button
-              onClick={() => setView("progress")}
-              className={`py-2 px-4 rounded font-medium transition ${
-                view === "progress"
-                  ? "bg-blue-500 text-white"
-                  : "bg-gray-200 hover:bg-gray-300"
-              }`}
-            >
-              Week Progress
-            </button>
-            <button
               onClick={() => setView("standings")}
               className={`py-2 px-4 rounded font-medium transition ${
                 view === "standings"
@@ -3545,6 +3535,16 @@ export function App() {
                 Members
               </button>
             )}
+            <button
+              onClick={() => setView("progress")}
+              className={`py-2 px-4 rounded font-medium transition ${
+                view === "progress"
+                  ? "bg-blue-500 text-white"
+                  : "bg-gray-200 hover:bg-gray-300"
+              }`}
+            >
+              Week Progress
+            </button>
           </div>
         </div>
       </div>
