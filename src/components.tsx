@@ -2958,13 +2958,14 @@ export function WeeklySummary() {
                           : pick.isCorrect === false
                           ? "#dc2626"
                           : "transparent";
+                      const isLoss = pick.isCorrect === false;
                       return (
                         <td key={p.id} className="p-0.5">
                           <div
                             className="w-full h-9 box-border border-2 rounded flex flex-col items-center justify-center leading-none mx-auto"
                             style={{
-                              background: colors.bg,
-                              color: colors.fg,
+                              background: isLoss ? "#ffffff" : colors.bg,
+                              color: isLoss ? "#6b7280" : colors.fg,
                               borderColor,
                             }}
                           >
