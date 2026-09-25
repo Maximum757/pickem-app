@@ -8,6 +8,7 @@ import { useAuth } from "./AuthContext";
 import { getTeamColor, getTeamDisplayName, getTeamLogoUrl } from "./teamColors";
 import * as firebaseUtils from "./firebase-utils";
 import * as schema from "./firestore-schema";
+import { effectiveLockTime, isPastLock } from "./lockTime";
 
 // Shared kickoff-time formatter — every place a game's time gets displayed
 // uses this, so they can't drift out of sync with each other. Explicit
@@ -154,14 +155,11 @@ function StatusCircle({
   game: ReturnType<typeof useLeague>["games"][number];
   picked: string | undefined;
 }) {
-  const { userPickResults } = useLeague();
+  const { userPickResults, games } = useLeague();
   const now = useNow();
   const isFinal = !!game.result;
-  // Same real-time-vs-stale-field issue as the results-entry screen — a
-  // game whose kickoff has passed should show as locked here too, not
-  // just once something explicitly flips the isLocked field. useNow()
-  // keeps this live rather than only ever as fresh as the last render.
-  const isPastKickoff = !game.timeTBD && !!game.gameTime && new Date(game.gameTime) <= now;
+  // Monday games lock at Sunday night's kickoff, not their own.
+  const isPastKickoff = isPastLock(game, games, now);
   const isLocked = (game.isLocked || isPastKickoff) && !isFinal;
 
   if (isLocked) {
@@ -465,7 +463,9 @@ export function PicksScreen() {
           // nobody's flipped isLocked yet. Checking it here too means the
           // button visibly disables instead of inviting a click the server
           // will reject anyway.
-          const isPastKickoff = !game.timeTBD && !!game.gameTime && new Date(game.gameTime) <= now;
+          const isPastKickoff = isPastLock(game, games, now);
+          const lockAt = effectiveLockTime(game, games);
+          const locksEarly = !!lockAt && !!game.gameTime && lockAt < game.gameTime;
           const isLocked = (game.isLocked || isPastKickoff) && !isFinal;
           const isClickable = !isLocked && !isFinal && !myWeekLocked;
 
@@ -498,7 +498,12 @@ export function PicksScreen() {
           return (
             <div key={game.id} className="border rounded-lg p-3 bg-white">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-gray-600">{gameTimeOrScoreLabel(game)}</span>
+                <span className="text-xs text-gray-600">
+                  {gameTimeOrScoreLabel(game)}
+                  {locksEarly && !isPastKickoff && !isFinal && (
+                    <span className="text-gray-400"> · picks lock {formatKickoff(lockAt!)}</span>
+                  )}
+                </span>
                 {isLocked && !game.live && (
                   <span className="text-[10px] font-semibold uppercase tracking-wide bg-gray-100 border border-gray-300 text-gray-600 rounded-full px-2 py-0.5">
                     Locked
@@ -989,35 +994,53 @@ function rankRows(
     .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
 }
 
-function WhatIfTable({ title, rows, viewerId }: { title: string; rows: WhatIfRow[]; viewerId: string | null }) {
+function WhatIfTable({
+  title,
+  rows,
+  viewerId,
+  followedId,
+  onFollow,
+}: {
+  title: string;
+  rows: WhatIfRow[];
+  viewerId: string | null;
+  followedId: string | null;
+  onFollow: (playerId: string) => void;
+}) {
   return (
-    <div className="border rounded overflow-hidden min-w-0 bg-white">
-      <div className="bg-gray-100 px-2 py-1.5 text-xs font-bold">{title}</div>
-      <table className="w-full text-xs">
+    <div className="border rounded overflow-hidden bg-white w-max max-w-full">
+      <div className="bg-gray-100 px-2 py-1 text-xs font-bold">{title}</div>
+      <table className="text-xs">
         <thead className="bg-gray-50">
           <tr>
-            <th className="text-left p-1.5 w-6">#</th>
-            <th className="p-1.5 w-6"></th>
-            <th className="text-left p-1.5">Player</th>
-            <th className="text-right p-1.5">Pts</th>
+            <th className="text-left px-1.5 py-1">#</th>
+            <th className="px-1 py-1"></th>
+            <th className="text-left px-1.5 py-1">Player</th>
+            <th className="text-right px-1.5 py-1">Pts</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => {
             const moved = r.rankNow - r.rankThen;
+            const followed = r.playerId === followedId;
             return (
-              <tr key={r.playerId} className={`border-t ${r.playerId === viewerId ? "bg-blue-50 font-semibold" : ""}`}>
-                <td className="p-1.5 text-gray-500">{r.rankThen}</td>
-                <td className="p-1.5 text-[10px] font-bold whitespace-nowrap">
+              <tr
+                key={r.playerId}
+                onClick={() => onFollow(r.playerId)}
+                title={`Play out ${r.name}'s remaining picks`}
+                className={`border-t cursor-pointer hover:bg-gray-50 ${
+                  followed ? "bg-amber-100" : r.playerId === viewerId ? "bg-blue-50 font-semibold" : ""
+                }`}
+              >
+                <td className="px-1.5 py-0.5 text-gray-500">{r.rankThen}</td>
+                <td className="px-1 py-0.5 text-[10px] font-bold whitespace-nowrap">
                   {moved > 0 && <span className="text-green-600">▲{moved}</span>}
                   {moved < 0 && <span className="text-red-600">▼{-moved}</span>}
                 </td>
-                <td className="p-1.5 max-w-[8rem]">
-                  <div className="truncate" title={r.name}>
-                    {r.name}
-                  </div>
+                <td className="px-1.5 py-0.5 whitespace-nowrap" title={r.name}>
+                  {r.name}
                 </td>
-                <td className="p-1.5 text-right whitespace-nowrap">
+                <td className="px-1.5 py-0.5 text-right whitespace-nowrap">
                   <span className="font-semibold">{r.points}</span>
                   {r.delta > 0 && <span className="text-green-600 text-[10px] ml-1">+{r.delta}</span>}
                 </td>
@@ -1038,12 +1061,14 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
   const [loadingPicks, setLoadingPicks] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [chosen, setChosen] = useState<{ [gameId: string]: string }>({});
+  const [followedId, setFollowedId] = useState<string | null>(null);
 
   React.useEffect(() => {
     if (!leagueId || !playerId) return;
     setLoadingPicks(true);
     setLoadError(null);
     setChosen({});
+    setFollowedId(null);
     (includeUnlocked
       ? firebaseUtils.getAllPicksForWeek(leagueId, currentWeek)
       : firebaseUtils.getVisiblePicksForWeek(leagueId, currentWeek, playerId)
@@ -1057,7 +1082,7 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
     .filter((g) => {
       if (g.result) return false;
       if (includeUnlocked) return true;
-      const pastKickoff = !g.timeTBD && !!g.gameTime && new Date(g.gameTime) <= now;
+      const pastKickoff = isPastLock(g, games, now);
       return g.isLocked || g.isManuallyLocked || pastKickoff;
     })
     .sort((a, b) => a.order - b.order);
@@ -1109,6 +1134,23 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
 
   const pickedCount = pendingGames.filter((g) => chosen[g.id]).length;
 
+  // Clicking a player fills every open game with that player's own pick, so
+  // they can see where a win-out would leave them. Clicking them again clears it.
+  const followPlayer = (id: string) => {
+    if (followedId === id) {
+      setFollowedId(null);
+      setChosen({});
+      return;
+    }
+    const next: { [gameId: string]: string } = {};
+    pendingGames.forEach((g) => {
+      const pick = (picksByGame.get(g.id) || []).find((p) => p.playerId === id);
+      if (pick) next[g.id] = pick.pickedTeam;
+    });
+    setFollowedId(id);
+    setChosen(next);
+  };
+
   return (
     <div className="p-4">
       <WeekSelector currentWeek={currentWeek} officialWeek={league?.currentWeek} onChange={setCurrentWeek} />
@@ -1123,14 +1165,26 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
       ) : loadError ? (
         <div className="text-sm text-red-600">{loadError}</div>
       ) : (
-        <div className="grid grid-cols-[1fr_minmax(16rem,20rem)_1fr] gap-3 items-start">
-          <WhatIfTable title={`Week ${currentWeek}`} rows={weekRows} viewerId={playerId} />
+        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 items-start">
+          <WhatIfTable
+            title={`Week ${currentWeek}`}
+            rows={weekRows}
+            viewerId={playerId}
+            followedId={followedId}
+            onFollow={followPlayer}
+          />
 
           <div className="border rounded bg-white overflow-hidden">
             <div className="bg-gray-100 px-2 py-1.5 text-xs font-bold flex items-center justify-between">
               <span>{includeUnlocked ? "Games not final" : "Locked games"}</span>
               {pickedCount > 0 && (
-                <button onClick={() => setChosen({})} className="font-semibold text-blue-600 hover:underline">
+                <button
+                  onClick={() => {
+                    setChosen({});
+                    setFollowedId(null);
+                  }}
+                  className="font-semibold text-blue-600 hover:underline"
+                >
                   Reset
                 </button>
               )}
@@ -1161,14 +1215,15 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
                         return (
                           <button
                             key={team}
-                            onClick={() =>
+                            onClick={() => {
+                              setFollowedId(null);
                               setChosen((prev) => {
                                 const next = { ...prev };
                                 if (selected) delete next[g.id];
                                 else next[g.id] = team;
                                 return next;
-                              })
-                            }
+                              });
+                            }}
                             className="flex-1 rounded py-1.5 px-1 text-center border-2 transition"
                             style={{
                               background: selected ? colors.bg : "#f3f4f6",
@@ -1190,7 +1245,13 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
             )}
           </div>
 
-          <WhatIfTable title="Season" rows={seasonRows} viewerId={playerId} />
+          <WhatIfTable
+            title="Season"
+            rows={seasonRows}
+            viewerId={playerId}
+            followedId={followedId}
+            onFollow={followPlayer}
+          />
         </div>
       )}
     </div>
@@ -1975,7 +2036,7 @@ export function CommissionerDashboard() {
             // separately went to Schedule Manager and manually locked it —
             // a confusing dead end. Mirrors the same check PicksScreen
             // already does correctly.
-            const isPastKickoff = !g.timeTBD && !!g.gameTime && new Date(g.gameTime) <= now;
+            const isPastKickoff = isPastLock(g, games, now);
             const canDeclare = g.isLocked || isPastKickoff;
             const isEditing = editingResultGameId === g.id;
 
@@ -2272,8 +2333,7 @@ export function CommissionerDashboard() {
             // it themselves. Same real-time check as the results-entry
             // section above: g.isLocked alone doesn't reflect kickoff
             // having passed, only an explicit lock/result action.
-            const gameIsPastKickoff =
-              !game.timeTBD && !!game.gameTime && new Date(game.gameTime) <= now;
+            const gameIsPastKickoff = isPastLock(game, games, now);
             const gameDetails = pickDetailsByGame[game.id] || {};
             const wildcardAssignedIds = Object.keys(gameDetails).filter(
               (pid) => gameDetails[pid].isWildcard
@@ -2469,8 +2529,7 @@ export function EveryonesPicksScreen() {
 
   const sortedGames = [...games].sort((a, b) => a.order - b.order); // pick-sheet order
   const lastGame = sortedGames.length > 0 ? sortedGames[sortedGames.length - 1] : null;
-  const lastGamePastKickoff =
-    !!lastGame && !lastGame.timeTBD && !!lastGame.gameTime && new Date(lastGame.gameTime) <= now;
+  const lastGamePastKickoff = !!lastGame && isPastLock(lastGame, sortedGames, now);
   // TB row is tied to the last pick-sheet game: hidden until that game
   // has locked, same moment that game's picks become public.
   const showTiebreakerRow =

@@ -19,6 +19,7 @@ import {
   Query,
 } from "firebase/firestore";
 import * as engine from "../pick-em-engine";
+import { effectiveLockTime } from "./lockTime";
 import * as schema from "./firestore-schema";
 
 // Initialize Firebase (replace with your config)
@@ -1389,6 +1390,29 @@ export async function updateGameSchedule(
     gameTime: update.gameTime ? Timestamp.fromDate(update.gameTime) : null,
     timeTBD: update.timeTBD,
   });
+  const week = (await getDoc(gameRef)).data()?.week as number | undefined;
+  if (week !== undefined) await syncMondayLockTimes(leagueId, week);
+}
+
+async function syncMondayLockTimes(leagueId: string, week: number): Promise<void> {
+  const games = await getGamesForWeek(leagueId, week);
+  const timed = games.map((g) => ({
+    gameTime: g.gameTime ? g.gameTime.toDate() : null,
+    timeTBD: g.timeTBD,
+  }));
+  await Promise.all(
+    games.map((g, i) => {
+      const lockAt = effectiveLockTime(timed[i], timed);
+      const own = timed[i].gameTime;
+      const earlier = !!lockAt && !!own && lockAt < own;
+      const stored = g.locksAt ? g.locksAt.toMillis() : null;
+      const next = earlier ? lockAt!.getTime() : null;
+      if (stored === next) return Promise.resolve();
+      return updateDoc(doc(db, `leagues/${leagueId}/games`, g.id), {
+        locksAt: next === null ? null : Timestamp.fromMillis(next),
+      });
+    })
+  );
 }
 
 /**

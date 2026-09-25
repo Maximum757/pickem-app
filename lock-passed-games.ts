@@ -43,6 +43,29 @@ if (getApps().length === 0) {
 const db = getFirestore();
 const LEAGUE_ID = process.env.REACT_APP_LEAGUE_ID || "week0-test-league";
 const ESPN_ENTERED_BY = "espn-scoreboard";
+
+function etWeekday(ms: number): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" }).format(new Date(ms));
+}
+
+// Monday games lock at the latest Sunday kickoff that week.
+function lockMillis(
+  g: FirebaseFirestore.DocumentData,
+  snap: FirebaseFirestore.QuerySnapshot
+): number | null {
+  if (g.timeTBD || !g.gameTime) return null;
+  const own = g.gameTime.toMillis() as number;
+  if (etWeekday(own) !== "Mon") return own;
+  let latestSunday: number | null = null;
+  snap.docs.forEach((d) => {
+    const other = d.data();
+    if (other.week !== g.week || other.timeTBD || !other.gameTime) return;
+    const ms = other.gameTime.toMillis() as number;
+    if (etWeekday(ms) !== "Sun") return;
+    if (latestSunday === null || ms > latestSunday) latestSunday = ms;
+  });
+  return latestSunday ?? own;
+}
 const TIE = "TIE";
 
 const ESPN_SCOREBOARD_URLS = [
@@ -339,13 +362,24 @@ async function lockPassedGames() {
     }
   }
 
+  for (const doc of gamesSnap.docs) {
+    const g = doc.data();
+    const locks = lockMillis(g, gamesSnap);
+    const own = g.gameTime?.toMillis?.() as number | undefined;
+    if (locks === null || own === undefined || locks >= own) continue;
+    if (g.locksAt?.toMillis?.() === locks) continue;
+    await doc.ref.update({ locksAt: Timestamp.fromMillis(locks) });
+    console.log(`  ${g.awayTeam} @ ${g.homeTeam} (week ${g.week}) locks at Sunday night`);
+  }
+
   const toLock: FirebaseFirestore.QueryDocumentSnapshot[] = [];
   for (const doc of gamesSnap.docs) {
     const g = doc.data();
     if (g.isLocked) continue;
     const espn = espnByMatch.get(matchKey(g.awayTeam, g.homeTeam));
     const espnStarted = !!espn && espn.state !== "pre";
-    const kickoffPassed = !g.timeTBD && !!g.gameTime && g.gameTime.toMillis() <= now.toMillis();
+    const locks = lockMillis(g, gamesSnap);
+    const kickoffPassed = locks !== null && locks <= now.toMillis();
     if (espnStarted || kickoffPassed) {
       toLock.push(doc);
     }

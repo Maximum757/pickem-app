@@ -117,6 +117,7 @@ export interface GameDoc {
   awayTeam: string;
   gameTime: Timestamp | null; // Kickoff time. Null until the league (or commissioner) sets it.
   timeTBD: boolean; // True when gameTime is unknown/unset — common for flex games and late-season weeks.
+  locksAt?: Timestamp; // When picks close, if earlier than kickoff. Monday games lock at Sunday night.
   isPlayoff: boolean;
   playoffRound?: string; // "WildCard", "Divisional", "Championship", "SuperBowl"
   playoffMultiplier: number; // 1, 1.25, 1.5, 2
