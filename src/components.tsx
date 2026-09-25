@@ -3980,8 +3980,8 @@ export function App() {
         {!loading && view === "members" && isCommissioner && <MembersScreen />}
         {!loading && view === "whatif" && <WhatIfScreen />}
         {!loading && view === "commishwhatif" && isCommissioner && <WhatIfScreen includeUnlocked />}
+        {!loading && view === "progress" && <WeekProgressScreen />}
       </div>
-      {!loading && view === "progress" && <WeekProgressScreen />}
     </div>
   );
 }
