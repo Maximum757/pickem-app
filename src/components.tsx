@@ -963,6 +963,240 @@ export function PayoutsScreen() {
   );
 }
 
+// ============================================================================
+// WHAT IF - Pick a winner for any locked-but-unfinished game and see how the
+// week and season standings would shake out. Choices live only in this
+// viewer's browser; nothing is saved.
+// ============================================================================
+
+type WhatIfRow = { playerId: string; name: string; points: number; delta: number; rankNow: number; rankThen: number };
+
+function rankRows(
+  entries: { playerId: string; name: string; now: number; then: number }[]
+): WhatIfRow[] {
+  const rankOf = (values: number[], v: number) => 1 + values.filter((x) => x > v).length;
+  const nowValues = entries.map((e) => e.now);
+  const thenValues = entries.map((e) => e.then);
+  return entries
+    .map((e) => ({
+      playerId: e.playerId,
+      name: e.name,
+      points: e.then,
+      delta: e.then - e.now,
+      rankNow: rankOf(nowValues, e.now),
+      rankThen: rankOf(thenValues, e.then),
+    }))
+    .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
+}
+
+function WhatIfTable({ title, rows, viewerId }: { title: string; rows: WhatIfRow[]; viewerId: string | null }) {
+  return (
+    <div className="border rounded overflow-hidden min-w-0 bg-white">
+      <div className="bg-gray-100 px-2 py-1.5 text-xs font-bold">{title}</div>
+      <table className="w-full text-xs">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="text-left p-1.5 w-6">#</th>
+            <th className="p-1.5 w-6"></th>
+            <th className="text-left p-1.5">Player</th>
+            <th className="text-right p-1.5">Pts</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const moved = r.rankNow - r.rankThen;
+            return (
+              <tr key={r.playerId} className={`border-t ${r.playerId === viewerId ? "bg-blue-50 font-semibold" : ""}`}>
+                <td className="p-1.5 text-gray-500">{r.rankThen}</td>
+                <td className="p-1.5 text-[10px] font-bold whitespace-nowrap">
+                  {moved > 0 && <span className="text-green-600">▲{moved}</span>}
+                  {moved < 0 && <span className="text-red-600">▼{-moved}</span>}
+                </td>
+                <td className="p-1.5 max-w-[8rem]">
+                  <div className="truncate" title={r.name}>
+                    {r.name}
+                  </div>
+                </td>
+                <td className="p-1.5 text-right whitespace-nowrap">
+                  <span className="font-semibold">{r.points}</span>
+                  {r.delta > 0 && <span className="text-green-600 text-[10px] ml-1">+{r.delta}</span>}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: boolean }) {
+  const { leagueId, playerId, games, players, standings, currentWeek, setCurrentWeek, league, loading } =
+    useLeague();
+  const now = useNow();
+  const [picks, setPicks] = useState<schema.PickDoc[]>([]);
+  const [loadingPicks, setLoadingPicks] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<{ [gameId: string]: string }>({});
+
+  React.useEffect(() => {
+    if (!leagueId || !playerId) return;
+    setLoadingPicks(true);
+    setLoadError(null);
+    setChosen({});
+    (includeUnlocked
+      ? firebaseUtils.getAllPicksForWeek(leagueId, currentWeek)
+      : firebaseUtils.getVisiblePicksForWeek(leagueId, currentWeek, playerId)
+    )
+      .then(setPicks)
+      .catch((err) => setLoadError(`Failed to load picks: ${err}`))
+      .finally(() => setLoadingPicks(false));
+  }, [leagueId, playerId, currentWeek, includeUnlocked]);
+
+  const pendingGames = games
+    .filter((g) => {
+      if (g.result) return false;
+      if (includeUnlocked) return true;
+      const pastKickoff = !g.timeTBD && !!g.gameTime && new Date(g.gameTime) <= now;
+      return g.isLocked || g.isManuallyLocked || pastKickoff;
+    })
+    .sort((a, b) => a.order - b.order);
+
+  const picksByGame = new Map<string, schema.PickDoc[]>();
+  picks.forEach((p) => {
+    if (!picksByGame.has(p.gameId)) picksByGame.set(p.gameId, []);
+    picksByGame.get(p.gameId)!.push(p);
+  });
+  const countFor = (gameId: string, team: string) =>
+    (picksByGame.get(gameId) || []).filter((p) => p.pickedTeam === team).length;
+  // Contrarian scoring: each correct picker gets one point per player who
+  // picked the other side.
+  const pointsIfWins = (g: schema.UIGame, team: string) => {
+    const other = team === g.awayTeam ? g.homeTeam : g.awayTeam;
+    return Math.round(countFor(g.id, other) * (g.playoffMultiplier || 1) * 100) / 100;
+  };
+
+  const extraByPlayer = new Map<string, number>();
+  pendingGames.forEach((g) => {
+    const winner = chosen[g.id];
+    if (!winner) return;
+    const pts = pointsIfWins(g, winner);
+    (picksByGame.get(g.id) || []).forEach((p) => {
+      if (p.pickedTeam === winner) extraByPlayer.set(p.playerId, (extraByPlayer.get(p.playerId) || 0) + pts);
+    });
+  });
+
+  const activePlayers = players.filter((p) => !p.removedFromLeague);
+  const weekNow = (id: string) =>
+    picks.filter((p) => p.playerId === id).reduce((sum, p) => sum + (p.pointsAwarded || 0), 0);
+
+  const weekRows = rankRows(
+    activePlayers.map((p) => {
+      const nowPts = weekNow(p.id);
+      return { playerId: p.id, name: p.name, now: nowPts, then: nowPts + (extraByPlayer.get(p.id) || 0) };
+    })
+  );
+  const seasonRows = rankRows(
+    standings
+      .filter((s) => activePlayers.some((p) => p.id === s.playerId))
+      .map((s) => ({
+        playerId: s.playerId,
+        name: s.playerName,
+        now: s.totalPoints,
+        then: s.totalPoints + (extraByPlayer.get(s.playerId) || 0),
+      }))
+  );
+
+  const pickedCount = pendingGames.filter((g) => chosen[g.id]).length;
+
+  return (
+    <div className="p-4">
+      <WeekSelector currentWeek={currentWeek} officialWeek={league?.currentWeek} onChange={setCurrentWeek} />
+      <h2 className="text-2xl font-bold mb-1">{includeUnlocked ? "Commissioner What If?" : "What If?"}</h2>
+      <p className="text-sm text-gray-600 mb-4">
+        {includeUnlocked
+          ? "Private to you: every game that isn't final, including ones that haven't locked, using everyone's picks entered so far. Nothing is saved."
+          : "Pick a winner for any game that's locked but not final to see where everyone would land. Just for you — nothing is saved."}
+      </p>
+      {loading || loadingPicks ? (
+        <div className="text-sm text-gray-600">Loading...</div>
+      ) : loadError ? (
+        <div className="text-sm text-red-600">{loadError}</div>
+      ) : (
+        <div className="grid grid-cols-[1fr_minmax(16rem,20rem)_1fr] gap-3 items-start">
+          <WhatIfTable title={`Week ${currentWeek}`} rows={weekRows} viewerId={playerId} />
+
+          <div className="border rounded bg-white overflow-hidden">
+            <div className="bg-gray-100 px-2 py-1.5 text-xs font-bold flex items-center justify-between">
+              <span>{includeUnlocked ? "Games not final" : "Locked games"}</span>
+              {pickedCount > 0 && (
+                <button onClick={() => setChosen({})} className="font-semibold text-blue-600 hover:underline">
+                  Reset
+                </button>
+              )}
+            </div>
+            {pendingGames.length === 0 ? (
+              <p className="p-3 text-xs text-gray-500">
+                {includeUnlocked
+                  ? "Every game this week is final."
+                  : "No games are in progress right now. Games show up here once they lock at kickoff, until they go final."}
+              </p>
+            ) : (
+              <div className="divide-y">
+                {pendingGames.map((g) => (
+                  <div key={g.id} className="p-2">
+                    <div className="text-[10px] text-gray-500 mb-1 text-center">
+                      {g.live
+                        ? `Live · ${g.awayTeam} ${g.live.awayScore}–${g.live.homeScore} ${g.homeTeam}${
+                            g.live.detail ? ` · ${g.live.detail}` : ""
+                          }`
+                        : g.gameTime
+                        ? formatKickoff(new Date(g.gameTime))
+                        : "Locked"}
+                    </div>
+                    <div className="flex gap-1.5">
+                      {[g.awayTeam, g.homeTeam].map((team) => {
+                        const selected = chosen[g.id] === team;
+                        const colors = getTeamColor(team);
+                        return (
+                          <button
+                            key={team}
+                            onClick={() =>
+                              setChosen((prev) => {
+                                const next = { ...prev };
+                                if (selected) delete next[g.id];
+                                else next[g.id] = team;
+                                return next;
+                              })
+                            }
+                            className="flex-1 rounded py-1.5 px-1 text-center border-2 transition"
+                            style={{
+                              background: selected ? colors.bg : "#f3f4f6",
+                              color: selected ? colors.fg : "#374151",
+                              borderColor: selected ? "#16a34a" : "transparent",
+                            }}
+                          >
+                            <div className="text-sm font-bold leading-tight">{team}</div>
+                            <div className="text-[10px] leading-tight opacity-90">
+                              {countFor(g.id, team)} picked · +{pointsIfWins(g, team)} each
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <WhatIfTable title="Season" rows={seasonRows} viewerId={playerId} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 type StandingsSort =
   | { column: "season" }
   | { column: "total"; dir: "desc" | "asc" }
@@ -3182,7 +3416,7 @@ export function WeeklySummary() {
 // MAIN APP COMPONENT
 // ============================================================================
 
-type ViewType = "picks" | "mysummary" | "everyonespicks" | "progress" | "standings" | "payouts" | "commissioner" | "summary" | "members";
+type ViewType = "picks" | "mysummary" | "everyonespicks" | "progress" | "whatif" | "commishwhatif" | "standings" | "payouts" | "commissioner" | "summary" | "members";
 
 // ============================================================================
 // MEMBERS SCREEN - Roster with contact info and dues tracking (commissioner only)
@@ -3594,6 +3828,16 @@ export function App() {
               Standings
             </button>
             <button
+              onClick={() => setView("whatif")}
+              className={`py-2 px-4 rounded font-medium transition ${
+                view === "whatif"
+                  ? "bg-blue-500 text-white"
+                  : "bg-gray-200 hover:bg-gray-300"
+              }`}
+            >
+              What If?
+            </button>
+            <button
               onClick={() => setView("payouts")}
               className={`py-2 px-4 rounded font-medium transition ${
                 view === "payouts"
@@ -3639,6 +3883,18 @@ export function App() {
                 Members
               </button>
             )}
+            {isCommissioner && (
+              <button
+                onClick={() => setView("commishwhatif")}
+                className={`py-2 px-4 rounded font-medium transition ${
+                  view === "commishwhatif"
+                    ? "bg-blue-500 text-white"
+                    : "bg-gray-200 hover:bg-gray-300"
+                }`}
+              >
+                Commish What If?
+              </button>
+            )}
             <button
               onClick={() => setView("progress")}
               className={`py-2 px-4 rounded font-medium transition ${
@@ -3665,6 +3921,8 @@ export function App() {
         {!loading && view === "members" && isCommissioner && <MembersScreen />}
       </div>
       {!loading && view === "progress" && <WeekProgressScreen />}
+      {!loading && view === "whatif" && <WhatIfScreen />}
+      {!loading && view === "commishwhatif" && isCommissioner && <WhatIfScreen includeUnlocked />}
     </div>
   );
 }
