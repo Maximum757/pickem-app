@@ -3054,7 +3054,7 @@ export function WeekProgressScreen() {
     const measure = () =>
       setChartSize({
         width: chartBox.clientWidth,
-        height: Math.max(1400, Math.round(window.innerHeight * 1.4)),
+        height: Math.max(2400, Math.round(window.innerHeight * 2.2)),
       });
     measure();
     const observer = new ResizeObserver(measure);
