@@ -1165,7 +1165,7 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
       ) : loadError ? (
         <div className="text-sm text-red-600">{loadError}</div>
       ) : (
-        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 items-start">
+        <div className="grid grid-cols-[auto_20rem_auto] gap-3 items-start w-max max-w-full">
           <WhatIfTable
             title={`Week ${currentWeek}`}
             rows={weekRows}
