@@ -19,13 +19,15 @@
  *
  * To reduce the danger of a broken scraper corrupting real data, this
  * validates everything it parses BEFORE writing anything: every team must
- * have exactly 17 weeks of data, and every game's two spreads must be
+ * appear for every listed week except at most one bye, both teams in a game
+ * must list each other, and every game's two spreads must be
  * equal-and-opposite (the real mathematical property spreads have). If
  * those checks fail, it aborts with no writes at all rather than pushing
  * partial or garbled data.
  *
  * Run:
  *   npm run refresh:spreads
+ *   DRY_RUN=1 npm run refresh:spreads   (prints changes, writes nothing)
  */
 
 import { initializeApp, cert, getApps } from "firebase-admin/app";
@@ -49,6 +51,7 @@ if (getApps().length === 0) {
 
 const db = getFirestore();
 const LEAGUE_ID = process.env.REACT_APP_LEAGUE_ID || "week0-test-league";
+const DRY_RUN = process.env.DRY_RUN === "1";
 const SOURCE_URL = "https://www.survivorgrid.com/";
 
 const VALID_TEAMS = new Set([
@@ -83,7 +86,13 @@ function parseCell(text: string): { opponent: string; spread: string } | null {
   return { opponent: normalizeTeam(match[1]), spread: match[2] };
 }
 
-async function fetchAndParse(): Promise<Record<string, Record<number, string>>> {
+type TeamWeek = { opponent: string; spread: string };
+type ParsedGrid = {
+  weeks: number[];
+  spreads: Record<string, Record<number, TeamWeek>>;
+};
+
+async function fetchAndParse(): Promise<ParsedGrid> {
   console.log(`Fetching ${SOURCE_URL}...`);
   const res = await fetch(SOURCE_URL, {
     headers: { "User-Agent": "Mozilla/5.0 (compatible; pickem-app spread refresh)" },
@@ -94,40 +103,45 @@ async function fetchAndParse(): Promise<Record<string, Record<number, string>>> 
   const html = await res.text();
   const $ = cheerio.load(html);
 
-  const spreads: Record<string, Record<number, string>> = {};
+  const rows = $("tr")
+    .map((_, row) => [
+      $(row)
+        .find("td, th")
+        .map((__, cell) => $(cell).text().trim().replace(/\s+/g, " "))
+        .get(),
+    ])
+    .get() as string[][];
 
-  // Find every table row, look for one whose first few cells contain a
-  // recognizable team code — this is deliberately not tied to a specific
-  // table/column index, since that's the kind of thing that silently
-  // breaks a scraper the moment a site adds or reorders a column.
-  $("tr").each((_, row) => {
-    const cells = $(row)
-      .find("td, th")
-      .map((__, cell) => $(cell).text().trim())
-      .get();
-    if (cells.length < 10) return; // not a data row
+  // The grid only lists weeks that haven't been played yet, so the first
+  // week column shifts as the season goes on. Week numbers come from the
+  // header row ("Team", "3", "4", ...) rather than column position.
+  const header = rows.find((cells) => cells.includes("Team"));
+  if (!header) throw new Error("Couldn't find the grid's header row (no \"Team\" column).");
+  const teamCol = header.indexOf("Team");
+  const weekByCol = new Map<number, number>();
+  header.forEach((text, col) => {
+    if (col > teamCol && /^\d{1,2}$/.test(text)) weekByCol.set(col, Number(text));
+  });
+  const weeks = [...weekByCol.values()];
+  if (weeks.length === 0) throw new Error("Header row has no week-number columns.");
 
-    const teamCellIndex = cells.findIndex((c) => VALID_TEAMS.has(normalizeTeam(c)) || TEAM_CODE_ALIASES[c]);
-    if (teamCellIndex === -1) return;
-
-    const team = normalizeTeam(cells[teamCellIndex]);
-    const weekCells = cells.slice(teamCellIndex + 1, teamCellIndex + 19); // next 18 = weeks 1-18
-
-    const weeks: Record<number, string> = {};
-    weekCells.forEach((cellText, i) => {
-      const parsed = parseCell(cellText);
-      if (parsed) weeks[i + 1] = parsed.spread;
+  const spreads: Record<string, Record<number, TeamWeek>> = {};
+  rows.forEach((cells) => {
+    if (cells === header || cells.length <= teamCol) return;
+    const team = normalizeTeam(cells[teamCol]);
+    if (!VALID_TEAMS.has(team)) return;
+    const byWeek: Record<number, TeamWeek> = {};
+    weekByCol.forEach((week, col) => {
+      const parsed = parseCell(cells[col] || "");
+      if (parsed) byWeek[week] = parsed;
     });
-
-    if (Object.keys(weeks).length > 0) {
-      spreads[team] = weeks;
-    }
+    spreads[team] = byWeek;
   });
 
-  return spreads;
+  return { weeks, spreads };
 }
 
-function validate(spreads: Record<string, Record<number, string>>): string[] {
+function validate({ weeks, spreads }: ParsedGrid): string[] {
   const errors: string[] = [];
   const teamsFound = Object.keys(spreads);
 
@@ -136,21 +150,42 @@ function validate(spreads: Record<string, Record<number, string>>): string[] {
     errors.push(`Missing teams entirely: ${missingTeams.join(", ")}`);
   }
 
+  // Every team plays every listed week except at most one bye.
   teamsFound.forEach((team) => {
     const weekCount = Object.keys(spreads[team]).length;
-    if (weekCount !== 17) {
-      errors.push(`${team} has ${weekCount} weeks of data, expected 17 (one bye)`);
+    if (weekCount < weeks.length - 1) {
+      errors.push(`${team} has ${weekCount} of ${weeks.length} listed weeks, expected at most one bye`);
     }
+  });
+
+  // Each game appears twice (once per team): the opponents must point at
+  // each other and the spreads must be equal and opposite.
+  teamsFound.forEach((team) => {
+    Object.entries(spreads[team]).forEach(([week, { opponent, spread }]) => {
+      const other = spreads[opponent]?.[Number(week)];
+      if (!other || other.opponent !== team) {
+        errors.push(`Week ${week}: ${team} lists ${opponent}, but ${opponent} doesn't list ${team}`);
+        return;
+      }
+      const a = spread === "PK" ? 0 : parseFloat(spread);
+      const b = other.spread === "PK" ? 0 : parseFloat(other.spread);
+      if (Math.abs(a + b) > 0.01) {
+        errors.push(`Week ${week}: ${team} ${spread} vs ${opponent} ${other.spread} aren't equal and opposite`);
+      }
+    });
   });
 
   return errors;
 }
 
 async function refreshSpreads() {
-  const spreads = await fetchAndParse();
+  const grid = await fetchAndParse();
+  const { spreads } = grid;
 
-  console.log(`Parsed ${Object.keys(spreads).length} teams.`);
-  const errors = validate(spreads);
+  console.log(
+    `Parsed ${Object.keys(spreads).length} teams for weeks ${grid.weeks[0]}–${grid.weeks[grid.weeks.length - 1]}.`
+  );
+  const errors = validate(grid);
   if (errors.length > 0) {
     console.error("\nVALIDATION FAILED — aborting with NO writes to Firestore:");
     errors.forEach((e) => console.error(`  - ${e}`));
@@ -160,45 +195,57 @@ async function refreshSpreads() {
     );
     process.exit(1);
   }
-  console.log("Validation passed: every team has exactly 17 weeks of data.\n");
+  console.log("Validation passed: every game's two sides match and every team has at most one bye.\n");
 
   const gamesSnap = await db.collection("leagues").doc(LEAGUE_ID).collection("games").get();
 
+  const listedWeeks = new Set(grid.weeks);
+  const now = Date.now();
   let updated = 0;
-  let skipped = 0;
-  let mismatchWarnings = 0;
+  let unchanged = 0;
+  let started = 0;
+  let missing = 0;
 
   for (const gameDoc of gamesSnap.docs) {
     const g = gameDoc.data();
-    if (g.week === 0) {
-      skipped++;
+    if (!listedWeeks.has(g.week)) continue;
+
+    // A game's spread freezes once it kicks off — that's the line people
+    // picked against, even if the source keeps updating it.
+    const kickoff = g.gameTime?.toMillis?.() as number | undefined;
+    if (g.isLocked || g.isManuallyLocked || g.result || (kickoff !== undefined && kickoff <= now)) {
+      started++;
       continue;
     }
 
-    const awaySpread = spreads[g.awayTeam]?.[g.week];
-    const homeSpread = spreads[g.homeTeam]?.[g.week];
-
-    if (!awaySpread || !homeSpread) {
-      console.log(`  No spread data for ${g.awayTeam} @ ${g.homeTeam}, week ${g.week} — skipping`);
-      skipped++;
-      continue;
-    }
-
-    const numAway = awaySpread === "PK" ? 0 : parseFloat(awaySpread);
-    const numHome = homeSpread === "PK" ? 0 : parseFloat(homeSpread);
-    if (Math.abs(numAway + numHome) > 0.01) {
-      console.warn(
-        `  WARNING: ${g.awayTeam} (${awaySpread}) @ ${g.homeTeam} (${homeSpread}), week ${g.week} — ` +
-          `not equal/opposite, writing anyway but this looks wrong`
+    const away = spreads[g.awayTeam]?.[g.week];
+    const home = spreads[g.homeTeam]?.[g.week];
+    if (!away || !home || away.opponent !== g.homeTeam || home.opponent !== g.awayTeam) {
+      console.log(
+        `  Week ${g.week} ${g.awayTeam} @ ${g.homeTeam}: grid has ` +
+          `${g.awayTeam}→${away?.opponent ?? "nothing"}, ${g.homeTeam}→${home?.opponent ?? "nothing"} — skipping`
       );
-      mismatchWarnings++;
+      missing++;
+      continue;
     }
 
-    await gameDoc.ref.update({ awaySpread, homeSpread });
+    if (g.awaySpread === away.spread && g.homeSpread === home.spread) {
+      unchanged++;
+      continue;
+    }
+
+    console.log(
+      `  Week ${g.week} ${g.awayTeam} @ ${g.homeTeam}: ` +
+        `${g.awaySpread ?? "—"}/${g.homeSpread ?? "—"} → ${away.spread}/${home.spread}`
+    );
+    if (!DRY_RUN) await gameDoc.ref.update({ awaySpread: away.spread, homeSpread: home.spread });
     updated++;
   }
 
-  console.log(`\nUpdated ${updated} games, skipped ${skipped}${mismatchWarnings ? `, ${mismatchWarnings} spread-pair warnings` : ""}.`);
+  console.log(
+    `\n${DRY_RUN ? "Would update" : "Updated"} ${updated} games; ${unchanged} already current, ` +
+      `${started} already kicked off (left as-is), ${missing} not matched in the grid.`
+  );
 }
 
 refreshSpreads().catch((err) => {
