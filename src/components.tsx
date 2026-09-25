@@ -3978,10 +3978,10 @@ export function App() {
         {!loading && view === "commissioner" && isCommissioner && <CommissionerDashboard />}
         {!loading && view === "summary" && isCommissioner && <WeeklySummary />}
         {!loading && view === "members" && isCommissioner && <MembersScreen />}
+        {!loading && view === "whatif" && <WhatIfScreen />}
+        {!loading && view === "commishwhatif" && isCommissioner && <WhatIfScreen includeUnlocked />}
       </div>
       {!loading && view === "progress" && <WeekProgressScreen />}
-      {!loading && view === "whatif" && <WhatIfScreen />}
-      {!loading && view === "commishwhatif" && isCommissioner && <WhatIfScreen includeUnlocked />}
     </div>
   );
 }
