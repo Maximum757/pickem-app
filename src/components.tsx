@@ -33,10 +33,19 @@ function formatKickoff(date: Date): string {
   );
 }
 
+// A tie is stored as winner/loser "TIE" so no pick matches: every pick is a
+// loss and nobody scores.
+const TIE_RESULT = "TIE";
+
 function finalScoreLine(game: schema.UIGame): string | null {
   const r = game.result;
   if (!r) return null;
   const hasScore = (r.winnerScore || 0) > 0 || (r.loserScore || 0) > 0;
+  if (r.winner === TIE_RESULT) {
+    return hasScore
+      ? `Final · ${game.awayTeam} ${r.winnerScore}–${r.loserScore} ${game.homeTeam} · Tie, no points`
+      : "Final · Tie, no points";
+  }
   if (!hasScore) return `Final · ${r.winner}`;
   const awayScore = r.winner === game.awayTeam ? r.winnerScore : r.loserScore;
   const homeScore = r.winner === game.homeTeam ? r.winnerScore : r.loserScore;
@@ -165,6 +174,13 @@ function StatusCircle({
 
   if (isFinal) {
     const result = game.result!;
+    if (result.winner === TIE_RESULT) {
+      return (
+        <div className="w-9 h-9 rounded-full border-2 border-red-600 bg-red-50 text-red-700 flex items-center justify-center text-[10px] font-bold flex-shrink-0">
+          TIE
+        </div>
+      );
+    }
     const won = picked === result.winner;
     return (
       <div
@@ -1742,10 +1758,19 @@ export function CommissionerDashboard() {
                   key={g.id}
                   className="flex items-center justify-between border rounded bg-gray-50 px-3 py-2"
                 >
-                  <span className="text-sm">
-                    <span className="font-semibold">{g.result.winner}</span>
-                    <span className="text-gray-500"> beat {g.result.loser}</span>
-                  </span>
+                  {g.result.winner === TIE_RESULT ? (
+                    <span className="text-sm">
+                      <span className="font-semibold">
+                        {g.awayTeam} and {g.homeTeam} tied
+                      </span>
+                      <span className="text-gray-500"> · nobody scores</span>
+                    </span>
+                  ) : (
+                    <span className="text-sm">
+                      <span className="font-semibold">{g.result.winner}</span>
+                      <span className="text-gray-500"> beat {g.result.loser}</span>
+                    </span>
+                  )}
                   <button
                     onClick={() => setEditingResultGameId(g.id)}
                     className="text-xs font-semibold text-blue-600 hover:underline"
@@ -1809,6 +1834,23 @@ export function CommissionerDashboard() {
                     }`}
                   >
                     {g.homeTeam}
+                  </button>
+                  <button
+                    onClick={() => {
+                      canDeclare && handleDeclareWinner(g.id, TIE_RESULT, TIE_RESULT);
+                      setEditingResultGameId(null);
+                    }}
+                    disabled={!canDeclare}
+                    title="Tie: nobody gets points for this game"
+                    className={`py-2 px-3 rounded text-sm font-semibold ${
+                      g.result?.winner === TIE_RESULT
+                        ? "bg-gray-200 border-2 border-gray-500"
+                        : canDeclare
+                        ? "bg-gray-100 hover:bg-gray-200 hover:border-gray-500 border-2 border-transparent cursor-pointer"
+                        : "bg-gray-50 text-gray-400 cursor-not-allowed"
+                    }`}
+                  >
+                    Tie
                   </button>
                 </div>
               </div>

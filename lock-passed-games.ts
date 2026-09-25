@@ -11,8 +11,8 @@
  * If that fetch fails, kickoff-based locking still runs so Weekly Summary
  * isn't blocked on ESPN being up.
  *
- * Ties are left for the commissioner — this league's scoring assumes a
- * winner and a loser.
+ * Ties are a wash: the result is saved with winner/loser "TIE", so no pick
+ * matches and nobody gets points for that game.
  *
  * Existing results are never overwritten. Wrong auto-result → Commissioner
  * Dashboard "Wrong? Fix it."
@@ -43,6 +43,7 @@ if (getApps().length === 0) {
 const db = getFirestore();
 const LEAGUE_ID = process.env.REACT_APP_LEAGUE_ID || "week0-test-league";
 const ESPN_ENTERED_BY = "espn-scoreboard";
+const TIE = "TIE";
 
 const ESPN_SCOREBOARD_URLS = [
   "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
@@ -368,7 +369,7 @@ async function lockPassedGames() {
 
   let finalsEntered = 0;
   let scoresFilled = 0;
-  let tiesSkipped = 0;
+  let tiesEntered = 0;
   for (const doc of gamesSnap.docs) {
     const g = doc.data();
     if (g.week === 0) continue;
@@ -392,20 +393,16 @@ async function lockPassedGames() {
 
     if (!espn.completed && espn.state !== "post") continue;
 
-    if (espn.awayScore === espn.homeScore) {
-      console.log(`  Tie (left for commissioner): ${espn.away} @ ${espn.home} ${espn.awayScore}-${espn.homeScore}`);
-      tiesSkipped++;
-      continue;
-    }
-
+    const isTie = espn.awayScore === espn.homeScore;
     const homeWon = espn.homeScore > espn.awayScore;
-    const espnWinner = homeWon ? g.homeTeam : g.awayTeam;
-    const espnLoser = homeWon ? g.awayTeam : g.homeTeam;
+    const espnWinner = isTie ? TIE : homeWon ? g.homeTeam : g.awayTeam;
+    const espnLoser = isTie ? TIE : homeWon ? g.awayTeam : g.homeTeam;
 
     if (g.result) {
       const missingScores = (g.result.winnerScore || 0) === 0 && (g.result.loserScore || 0) === 0;
       if (!missingScores) continue;
       const winner = g.result.winner;
+      if (winner === TIE && !isTie) continue;
       const winnerScore = winner === g.homeTeam ? espn.homeScore : espn.awayScore;
       const loserScore = winner === g.homeTeam ? espn.awayScore : espn.homeScore;
       console.log(
@@ -423,7 +420,12 @@ async function lockPassedGames() {
     const winnerScore = homeWon ? espn.homeScore : espn.awayScore;
     const loserScore = homeWon ? espn.awayScore : espn.homeScore;
 
-    console.log(`  Final ${g.awayTeam} @ ${g.homeTeam}: ${espnWinner} ${winnerScore}-${loserScore}`);
+    console.log(
+      isTie
+        ? `  Final ${g.awayTeam} @ ${g.homeTeam}: tie ${winnerScore}-${loserScore}, nobody scores`
+        : `  Final ${g.awayTeam} @ ${g.homeTeam}: ${espnWinner} ${winnerScore}-${loserScore}`
+    );
+    if (isTie) tiesEntered++;
     await doc.ref.update({
       isLocked: true,
       "result.winner": espnWinner,
@@ -445,8 +447,7 @@ async function lockPassedGames() {
     toLock.length === 0 &&
     revealedWeeks === 0 &&
     finalsEntered === 0 &&
-    scoresFilled === 0 &&
-    tiesSkipped === 0
+    scoresFilled === 0
   ) {
     console.log("No games need locking or scoring.");
     return;
@@ -456,7 +457,7 @@ async function lockPassedGames() {
     `\nLocked ${toLock.length} game(s). Entered ${finalsEntered} final(s). ` +
       `Filled scores on ${scoresFilled} existing result(s). ` +
       `Revealed tiebreaker guesses for ${revealedWeeks} week(s).` +
-      (tiesSkipped ? ` Skipped ${tiesSkipped} tie(s).` : "")
+      (tiesEntered ? ` ${tiesEntered} of those finals were ties (nobody scores).` : "")
   );
 }
 
