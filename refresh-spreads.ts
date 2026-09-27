@@ -128,7 +128,8 @@ async function fetchAndParse(): Promise<ParsedGrid> {
   const spreads: Record<string, Record<number, TeamWeek>> = {};
   rows.forEach((cells) => {
     if (cells === header || cells.length <= teamCol) return;
-    const team = normalizeTeam(cells[teamCol]);
+    // Teams that already played this week get a result appended, e.g. "GB (L)".
+    const team = normalizeTeam(cells[teamCol].replace(/\s*\([WLT]\)\s*$/i, ""));
     if (!VALID_TEAMS.has(team)) return;
     const byWeek: Record<number, TeamWeek> = {};
     weekByCol.forEach((week, col) => {
