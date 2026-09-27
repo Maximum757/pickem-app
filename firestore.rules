@@ -34,10 +34,10 @@ service cloud.firestore {
     // isLocked/isManuallyLocked only.
     function gameIsOpen(leagueId, gameId) {
       let path = /databases/$(database)/documents/leagues/$(leagueId)/games/$(gameId);
-      let lockAt = get(path).data.locksAt != null ? get(path).data.locksAt : get(path).data.gameTime;
       return exists(path) &&
         get(path).data.isLocked == false &&
-        (lockAt == null || request.time < lockAt);
+        (get(path).data.gameTime == null || request.time < get(path).data.gameTime) &&
+        (get(path).data.get('locksAt', null) == null || request.time < get(path).data.get('locksAt', null));
     }
 
     // A tiebreaker is open for guesses if no question has been set yet for
