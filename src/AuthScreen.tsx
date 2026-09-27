@@ -13,13 +13,32 @@ import { useAuth } from "./AuthContext";
 const WEEK0_LEAGUE_ID = "week0-test-league";
 
 export function AuthScreen() {
-  const { signUp, signIn, authError } = useAuth();
+  const { signUp, signIn, resetPassword, authError } = useAuth();
   const [mode, setMode] = useState<"signin" | "signup">("signup");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [phone, setPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [resetSentTo, setResetSentTo] = useState<string | null>(null);
+  const [resetPrompt, setResetPrompt] = useState(false);
+
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      setResetPrompt(true);
+      return;
+    }
+    setResetPrompt(false);
+    setSubmitting(true);
+    try {
+      await resetPassword(email.trim());
+      setResetSentTo(email.trim());
+    } catch {
+      setResetSentTo(null);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,7 +121,29 @@ export function AuthScreen() {
               onChange={(e) => setPassword(e.target.value)}
               className="w-full border p-2 rounded"
             />
+            {mode === "signin" && (
+              <button
+                type="button"
+                onClick={handleForgotPassword}
+                disabled={submitting}
+                className="mt-1 text-xs text-blue-600 hover:underline disabled:opacity-50"
+              >
+                Forgot password?
+              </button>
+            )}
           </div>
+
+          {mode === "signin" && resetPrompt && (
+            <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+              Enter your email above, then tap "Forgot password?" again.
+            </div>
+          )}
+
+          {mode === "signin" && resetSentTo && (
+            <div className="text-sm text-green-800 bg-green-50 border border-green-200 rounded p-2">
+              Reset link sent to {resetSentTo}. Check your inbox (and spam folder).
+            </div>
+          )}
 
           {mode === "signup" && (
             <div>

@@ -22,6 +22,7 @@ import {
   onAuthStateChanged,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  sendPasswordResetEmail,
   signOut as firebaseSignOut,
   updateProfile,
   User,
@@ -35,6 +36,7 @@ interface AuthContextType {
   authError: string | null;
   signUp: (email: string, password: string, displayName: string, leagueId: string, phone?: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -127,13 +129,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const resetPassword = async (email: string) => {
+    setAuthError(null);
+    try {
+      await sendPasswordResetEmail(getAuth(), email);
+    } catch (err: any) {
+      setAuthError(readableAuthError(err));
+      throw err;
+    }
+  };
+
   const signOut = async () => {
     const auth = getAuth();
     await firebaseSignOut(auth);
   };
 
   return (
-    <AuthContext.Provider value={{ user, authLoading, authError, signUp, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, authLoading, authError, signUp, signIn, resetPassword, signOut }}>
       {children}
     </AuthContext.Provider>
   );
