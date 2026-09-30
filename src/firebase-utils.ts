@@ -397,13 +397,8 @@ export async function updateCommissionerPicksVisibility(
   const picks = await getPlayerWeeklyPicks(leagueId, commissionerId, week);
   if (picks.length === 0) return;
 
-  const batch = writeBatch(db);
-  if (locked) {
-    picks.forEach((p) => {
-      const pickRef = doc(db, `leagues/${leagueId}/picks`, p.id);
-      batch.update(pickRef, { visibleToAll: true });
-    });
-  } else {
+  let toUpdate = picks;
+  if (!locked) {
     const gameIds = Array.from(new Set(picks.map((p) => p.gameId)));
     const gameDocs = await Promise.all(
       gameIds.map((gid) => getDoc(doc(db, `leagues/${leagueId}/games`, gid)))
@@ -411,13 +406,21 @@ export async function updateCommissionerPicksVisibility(
     const lockedGameIds = new Set(
       gameDocs.filter((d) => d.exists() && (d.data() as schema.GameDoc).isLocked).map((d) => d.id)
     );
-    picks.forEach((p) => {
-      if (lockedGameIds.has(p.gameId)) return; // stays visible — the game itself locked
-      const pickRef = doc(db, `leagues/${leagueId}/picks`, p.id);
-      batch.update(pickRef, { visibleToAll: false });
-    });
+    // Picks for games that already locked stay visible.
+    toUpdate = picks.filter((p) => !lockedGameIds.has(p.gameId));
   }
-  await batch.commit();
+
+  // Each pick update makes the rules read that pick's game doc, and a
+  // request over Firestore's rules document-access limit is denied outright.
+  // A full week (16 games) in one batch trips it; 8 per batch stays under.
+  const CHUNK = 8;
+  for (let i = 0; i < toUpdate.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    toUpdate.slice(i, i + CHUNK).forEach((p) => {
+      batch.update(doc(db, `leagues/${leagueId}/picks`, p.id), { visibleToAll: locked });
+    });
+    await batch.commit();
+  }
 }
 
 /**
