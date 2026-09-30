@@ -201,6 +201,26 @@ service cloud.firestore {
         allow read: if isSignedIn();
         allow write: if isCommissioner(leagueId);
       }
+
+      // Polls: every member can read the questions; only the commissioner
+      // creates, closes, or deletes them.
+      match /polls/{pollId} {
+        allow read: if isSignedIn();
+        allow create, update, delete: if isCommissioner(leagueId);
+
+        // Votes are readable by every member so the tally can show the
+        // split. A member can only write the vote doc whose id is their
+        // own uid, and only while the poll is still open.
+        match /votes/{voterId} {
+          allow read: if isSignedIn();
+          allow create, update: if isSelf(voterId) &&
+            get(/databases/$(database)/documents/leagues/$(leagueId)/polls/$(pollId)).data.closed == false &&
+            request.resource.data.optionIndex is int &&
+            request.resource.data.optionIndex >= 0 &&
+            request.resource.data.optionIndex < get(/databases/$(database)/documents/leagues/$(leagueId)/polls/$(pollId)).data.options.size();
+          allow delete: if isCommissioner(leagueId);
+        }
+      }
     }
   }
 }

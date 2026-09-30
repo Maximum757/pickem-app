@@ -3475,7 +3475,7 @@ export function WeeklySummary() {
 // MAIN APP COMPONENT
 // ============================================================================
 
-type ViewType = "picks" | "mysummary" | "everyonespicks" | "progress" | "whatif" | "commishwhatif" | "standings" | "payouts" | "commissioner" | "summary" | "members";
+type ViewType = "picks" | "mysummary" | "everyonespicks" | "progress" | "whatif" | "commishwhatif" | "standings" | "payouts" | "commissioner" | "summary" | "members" | "polls";
 
 // ============================================================================
 // MEMBERS SCREEN - Roster with contact info and dues tracking (commissioner only)
@@ -3706,6 +3706,269 @@ export function MembersScreen() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ============================================================================
+// POLLS - one vote per member, visible to the whole league
+// ============================================================================
+
+function PollsScreen() {
+  const { leagueId, playerId, isCommissioner, players } = useLeague();
+  const [polls, setPolls] = useState<schema.PollDoc[]>([]);
+  const [votesByPoll, setVotesByPoll] = useState<
+    Record<string, { voterId: string; optionIndex: number }[]>
+  >({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showNew, setShowNew] = useState(false);
+  const [question, setQuestion] = useState("");
+  const [optionDrafts, setOptionDrafts] = useState(["", ""]);
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+
+  const nameById = new Map(players.map((p) => [p.id, p.name]));
+  const memberCount = players.filter((p) => !p.removedFromLeague).length;
+
+  const load = async () => {
+    if (!leagueId) return;
+    const list = await firebaseUtils.getPolls(leagueId);
+    const votes = await Promise.all(list.map((p) => firebaseUtils.getPollVotes(leagueId, p.id)));
+    const byPoll: Record<string, { voterId: string; optionIndex: number }[]> = {};
+    list.forEach((p, i) => {
+      byPoll[p.id] = votes[i];
+    });
+    setPolls(list);
+    setVotesByPoll(byPoll);
+  };
+
+  useEffect(() => {
+    load().catch((err) => setError(`Failed to load polls: ${err}`));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leagueId]);
+
+  const vote = async (pollId: string, optionIndex: number) => {
+    if (!leagueId || !playerId || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await firebaseUtils.castPollVote(leagueId, pollId, playerId, optionIndex);
+      await load();
+    } catch (err) {
+      setError(`Failed to save vote: ${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const create = async () => {
+    if (!leagueId || !playerId) return;
+    const options = optionDrafts.map((o) => o.trim()).filter(Boolean);
+    if (!question.trim() || options.length < 2) {
+      setError("A poll needs a question and at least two options.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await firebaseUtils.createPoll(leagueId, playerId, question, options);
+      setQuestion("");
+      setOptionDrafts(["", ""]);
+      setShowNew(false);
+      await load();
+    } catch (err) {
+      setError(`Failed to create poll: ${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleClosed = async (poll: schema.PollDoc) => {
+    if (!leagueId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await firebaseUtils.setPollClosed(leagueId, poll.id, !poll.closed);
+      await load();
+    } catch (err) {
+      setError(`Failed to update poll: ${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (pollId: string) => {
+    if (!leagueId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await firebaseUtils.deletePoll(leagueId, pollId);
+      setConfirmingDelete(null);
+      await load();
+    } catch (err) {
+      setError(`Failed to delete poll: ${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="p-4 max-w-2xl">
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-2xl font-bold">Polls</h2>
+        {isCommissioner && (
+          <button
+            onClick={() => setShowNew((v) => !v)}
+            className="text-sm font-semibold text-blue-600"
+          >
+            {showNew ? "Cancel" : "New poll"}
+          </button>
+        )}
+      </div>
+      <p className="text-sm text-gray-600 mb-4">
+        One vote per manager. Tap an option to vote, or tap a different one to change it.
+      </p>
+
+      {error && (
+        <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2 mb-3">
+          {error}
+        </div>
+      )}
+
+      {showNew && isCommissioner && (
+        <div className="border rounded bg-white p-3 mb-4 space-y-2">
+          <input
+            type="text"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            placeholder="Question"
+            className="w-full border p-2 rounded text-sm"
+          />
+          {optionDrafts.map((draft, i) => (
+            <input
+              key={i}
+              type="text"
+              value={draft}
+              onChange={(e) =>
+                setOptionDrafts((prev) => prev.map((d, j) => (j === i ? e.target.value : d)))
+              }
+              placeholder={`Option ${i + 1}`}
+              className="w-full border p-2 rounded text-sm"
+            />
+          ))}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setOptionDrafts((prev) => [...prev, ""])}
+              className="text-xs font-semibold text-blue-600"
+            >
+              Add option
+            </button>
+            <button
+              onClick={create}
+              disabled={busy}
+              className="ml-auto bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-sm font-bold py-1.5 px-3 rounded"
+            >
+              Create poll
+            </button>
+          </div>
+        </div>
+      )}
+
+      {polls.length === 0 && (
+        <p className="text-sm text-gray-500">No polls yet.</p>
+      )}
+
+      <div className="space-y-4">
+        {polls.map((poll) => {
+          const votes = votesByPoll[poll.id] || [];
+          const mine = votes.find((v) => v.voterId === playerId);
+          return (
+            <div key={poll.id} className="border rounded bg-white p-3">
+              <div className="flex items-start justify-between gap-3 mb-1">
+                <h3 className="text-base font-bold">{poll.question}</h3>
+                {poll.closed && (
+                  <span className="text-xs font-bold px-2 py-1 rounded-full bg-gray-100 text-gray-600 shrink-0">
+                    Closed
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 mb-3">
+                {votes.length} of {memberCount} voted
+              </p>
+              <div className="space-y-2">
+                {poll.options.map((option, i) => {
+                  const chosen = votes.filter((v) => v.optionIndex === i);
+                  const pct = votes.length === 0 ? 0 : Math.round((chosen.length / votes.length) * 100);
+                  const selected = mine?.optionIndex === i;
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => !poll.closed && vote(poll.id, i)}
+                      disabled={poll.closed || busy}
+                      className={`w-full text-left border rounded p-2 ${
+                        selected ? "border-blue-500 bg-blue-50" : "border-gray-200 bg-white"
+                      } ${poll.closed ? "cursor-default" : "hover:border-blue-300"}`}
+                    >
+                      <div className="flex items-center justify-between text-sm">
+                        <span className={selected ? "font-semibold" : ""}>
+                          {selected ? "✓ " : ""}
+                          {option}
+                        </span>
+                        <span className="text-gray-500 text-xs">
+                          {chosen.length} · {pct}%
+                        </span>
+                      </div>
+                      <div className="mt-1 h-1.5 rounded bg-gray-100 overflow-hidden">
+                        <div className="h-full bg-blue-500" style={{ width: `${pct}%` }} />
+                      </div>
+                      {chosen.length > 0 && (
+                        <div className="mt-1 text-xs text-gray-500">
+                          {chosen.map((v) => nameById.get(v.voterId) || "Unknown").join(", ")}
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              {isCommissioner && (
+                <div className="flex items-center gap-3 mt-3">
+                  <button
+                    onClick={() => toggleClosed(poll)}
+                    disabled={busy}
+                    className="text-xs font-semibold text-blue-600"
+                  >
+                    {poll.closed ? "Reopen" : "Close poll"}
+                  </button>
+                  {confirmingDelete === poll.id ? (
+                    <>
+                      <button
+                        onClick={() => remove(poll.id)}
+                        disabled={busy}
+                        className="text-xs font-semibold text-red-600"
+                      >
+                        Confirm delete
+                      </button>
+                      <button
+                        onClick={() => setConfirmingDelete(null)}
+                        className="text-xs text-gray-400"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmingDelete(poll.id)}
+                      className="text-xs text-gray-400"
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -3955,6 +4218,16 @@ export function App() {
               </button>
             )}
             <button
+              onClick={() => setView("polls")}
+              className={`py-2 px-4 rounded font-medium transition ${
+                view === "polls"
+                  ? "bg-blue-500 text-white"
+                  : "bg-gray-200 hover:bg-gray-300"
+              }`}
+            >
+              Polls
+            </button>
+            <button
               onClick={() => setView("progress")}
               className={`py-2 px-4 rounded font-medium transition ${
                 view === "progress"
@@ -3980,6 +4253,7 @@ export function App() {
         {!loading && view === "members" && isCommissioner && <MembersScreen />}
         {!loading && view === "whatif" && <WhatIfScreen />}
         {!loading && view === "commishwhatif" && isCommissioner && <WhatIfScreen includeUnlocked />}
+        {!loading && view === "polls" && <PollsScreen />}
         {!loading && view === "progress" && <WeekProgressScreen />}
       </div>
     </div>

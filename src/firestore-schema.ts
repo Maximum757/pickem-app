@@ -15,6 +15,29 @@
 import { Timestamp } from "firebase/firestore";
 
 // ============================================================================
+// POLLS
+// /leagues/{leagueId}/polls/{pollId}
+// /leagues/{leagueId}/polls/{pollId}/votes/{playerId}
+// One open-ended question with a fixed list of options. Each member votes
+// once; the vote doc id is the voter's auth uid, which is what the security
+// rules use to keep a vote readable and writable only by its owner.
+// ============================================================================
+
+export interface PollDoc {
+  id: string;
+  question: string;
+  options: string[];
+  createdAt: Timestamp;
+  createdBy: string; // auth uid of the commissioner who created it
+  closed: boolean;
+}
+
+export interface PollVoteDoc {
+  optionIndex: number;
+  votedAt: Timestamp;
+}
+
+// ============================================================================
 // FIRESTORE COLLECTION STRUCTURE
 // ============================================================================
 

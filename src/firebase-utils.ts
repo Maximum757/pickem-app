@@ -15,6 +15,8 @@ import {
   setDoc,
   updateDoc,
   writeBatch,
+  deleteDoc,
+  addDoc,
   Timestamp,
   Query,
 } from "firebase/firestore";
@@ -1223,6 +1225,82 @@ export async function setPlayerWeekLock(
     locked,
     lockedAt: Timestamp.now(),
   } as schema.PlayerWeekLockDoc);
+}
+
+// ============================================================================
+// POLLS
+// ============================================================================
+
+export async function getPolls(leagueId: string): Promise<schema.PollDoc[]> {
+  const snap = await getDocs(collection(db, `leagues/${leagueId}/polls`));
+  return snap.docs
+    .map((d) => d.data() as schema.PollDoc)
+    .sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+}
+
+export async function createPoll(
+  leagueId: string,
+  commissionerId: string,
+  question: string,
+  options: string[]
+): Promise<void> {
+  const ref = await addDoc(collection(db, `leagues/${leagueId}/polls`), {
+    question: question.trim(),
+    options: options.map((o) => o.trim()).filter(Boolean),
+    createdAt: Timestamp.now(),
+    createdBy: commissionerId,
+    closed: false,
+  });
+  await updateDoc(ref, { id: ref.id });
+}
+
+export async function setPollClosed(leagueId: string, pollId: string, closed: boolean): Promise<void> {
+  await updateDoc(doc(db, `leagues/${leagueId}/polls`, pollId), { closed });
+}
+
+export async function deletePoll(leagueId: string, pollId: string): Promise<void> {
+  const votes = await getDocs(collection(db, `leagues/${leagueId}/polls/${pollId}/votes`));
+  const CHUNK = 400;
+  for (let i = 0; i < votes.docs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    votes.docs.slice(i, i + CHUNK).forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+  await deleteDoc(doc(db, `leagues/${leagueId}/polls`, pollId));
+}
+
+/** The signed-in member's own vote, or null if they haven't voted. */
+export async function getMyPollVote(
+  leagueId: string,
+  pollId: string,
+  playerId: string
+): Promise<schema.PollVoteDoc | null> {
+  const snap = await getDoc(doc(db, `leagues/${leagueId}/polls/${pollId}/votes`, playerId));
+  return snap.exists() ? (snap.data() as schema.PollVoteDoc) : null;
+}
+
+/** Every vote on a poll. The doc id is the voter's player id. */
+export async function getPollVotes(
+  leagueId: string,
+  pollId: string
+): Promise<{ voterId: string; optionIndex: number }[]> {
+  const snap = await getDocs(collection(db, `leagues/${leagueId}/polls/${pollId}/votes`));
+  return snap.docs.map((d) => ({
+    voterId: d.id,
+    optionIndex: (d.data() as schema.PollVoteDoc).optionIndex,
+  }));
+}
+
+export async function castPollVote(
+  leagueId: string,
+  pollId: string,
+  playerId: string,
+  optionIndex: number
+): Promise<void> {
+  await setDoc(doc(db, `leagues/${leagueId}/polls/${pollId}/votes`, playerId), {
+    optionIndex,
+    votedAt: Timestamp.now(),
+  } as schema.PollVoteDoc);
 }
 
 /**
