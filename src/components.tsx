@@ -8,7 +8,7 @@ import { useAuth } from "./AuthContext";
 import { getTeamColor, getTeamDisplayName, getTeamLogoUrl } from "./teamColors";
 import * as firebaseUtils from "./firebase-utils";
 import * as schema from "./firestore-schema";
-import { effectiveLockTime, isPastLock } from "./lockTime";
+import { effectiveLockTime, isPastLock, primetimeGames } from "./lockTime";
 
 // Shared kickoff-time formatter — every place a game's time gets displayed
 // uses this, so they can't drift out of sync with each other. Explicit
@@ -1053,6 +1053,146 @@ function WhatIfTable({
   );
 }
 
+// Once Sunday night locks, Monday night is locked too. The four ways those
+// two games can finish decide the week, so show that directly instead of
+// making someone click through each pair.
+function WeekWinnerMatrix({
+  snf,
+  mnf,
+  games,
+  picks,
+  players,
+}: {
+  snf: schema.UIGame;
+  mnf: schema.UIGame;
+  games: schema.UIGame[];
+  picks: schema.PickDoc[];
+  players: schema.PlayerDoc[];
+}) {
+  const picksByGame = new Map<string, schema.PickDoc[]>();
+  picks.forEach((p) => {
+    if (!picksByGame.has(p.gameId)) picksByGame.set(p.gameId, []);
+    picksByGame.get(p.gameId)!.push(p);
+  });
+  const pointsIf = (g: schema.UIGame, team: string) => {
+    const other = team === g.awayTeam ? g.homeTeam : g.awayTeam;
+    const losers = (picksByGame.get(g.id) || []).filter((p) => p.pickedTeam === other).length;
+    return Math.round(losers * (g.playoffMultiplier || 1) * 100) / 100;
+  };
+
+  const active = players.filter((p) => !p.removedFromLeague);
+  const skip = new Set([snf.id, mnf.id]);
+  const base = new Map<string, number>();
+  active.forEach((p) => {
+    base.set(
+      p.id,
+      picks
+        .filter((pk) => pk.playerId === p.id && !skip.has(pk.gameId))
+        .reduce((sum, pk) => sum + (pk.pointsAwarded || 0), 0)
+    );
+  });
+
+  const leadersFor = (snfWinner: string, mnfWinner: string) => {
+    const totals = new Map(base);
+    ([
+      [snf, snfWinner],
+      [mnf, mnfWinner],
+    ] as [schema.UIGame, string][]).forEach(([g, winner]) => {
+      const pts = pointsIf(g, winner);
+      (picksByGame.get(g.id) || []).forEach((p) => {
+        if (p.pickedTeam === winner) totals.set(p.playerId, (totals.get(p.playerId) || 0) + pts);
+      });
+    });
+    let best = -1;
+    let ids: string[] = [];
+    active.forEach((p) => {
+      const pts = totals.get(p.id) || 0;
+      if (pts > best) {
+        best = pts;
+        ids = [p.id];
+      } else if (pts === best) ids.push(p.id);
+    });
+    const names = ids
+      .map((id) => active.find((p) => p.id === id)?.name || "Unknown")
+      .sort((a, b) => a.localeCompare(b));
+    return { names, points: best };
+  };
+
+  const othersStillOpen = games.some((g) => g.id !== snf.id && g.id !== mnf.id && !g.result);
+  const snfTeams = [snf.awayTeam, snf.homeTeam];
+  const mnfTeams = [mnf.awayTeam, mnf.homeTeam];
+
+  const headerTeam = (team: string, actual: string | undefined) => {
+    const colors = getTeamColor(team);
+    const won = actual === team;
+    return (
+      <th
+        key={team}
+        className="px-3 py-2 text-sm font-bold text-center"
+        style={{ background: colors.bg, color: colors.fg }}
+      >
+        {team}
+        {won && <div className="text-[10px] font-semibold opacity-80">Final</div>}
+      </th>
+    );
+  };
+
+  return (
+    <div className="mb-4 border rounded bg-white overflow-hidden w-max max-w-full">
+      <div className="bg-gray-100 px-3 py-1.5 text-xs font-bold">
+        Who wins the week
+      </div>
+      <p className="px-3 pt-2 text-[10px] text-gray-500">
+        Sunday night across the top, Monday night down the side.
+      </p>
+      <table className="border-separate border-spacing-0">
+        <thead>
+          <tr>
+            <th className="px-2" />
+            {snfTeams.map((team) => headerTeam(team, snf.result?.winner))}
+          </tr>
+        </thead>
+        <tbody>
+          {mnfTeams.map((mnfTeam) => (
+            <tr key={mnfTeam}>
+              {headerTeam(mnfTeam, mnf.result?.winner)}
+              {snfTeams.map((snfTeam) => {
+                const cell = leadersFor(snfTeam, mnfTeam);
+                const tied = cell.names.length > 1;
+                const decided =
+                  snf.result?.winner === snfTeam && mnf.result?.winner === mnfTeam;
+                return (
+                  <td
+                    key={snfTeam}
+                    className={`border-t border-l px-3 py-2 text-center align-middle min-w-[9rem] ${
+                      decided ? "bg-green-50" : ""
+                    }`}
+                  >
+                    <div className={`text-sm leading-snug ${tied ? "text-amber-800" : "font-semibold"}`}>
+                      {cell.points > 0 ? cell.names.join(" & ") : "—"}
+                    </div>
+                    {cell.points > 0 && (
+                      <div className="text-[10px] text-gray-500 mt-0.5">
+                        {tied ? "tie · " : ""}
+                        {cell.points} pts
+                      </div>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {othersStillOpen && (
+        <p className="px-3 py-1.5 text-[10px] text-gray-500 border-t">
+          Games still in progress aren't counted yet, so these names can change as the rest of the slate finishes.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: boolean }) {
   const { leagueId, playerId, games, players, standings, currentWeek, setCurrentWeek, league, loading } =
     useLeague();
@@ -1134,6 +1274,23 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
 
   const pickedCount = pendingGames.filter((g) => chosen[g.id]).length;
 
+  const { snf, mnf } = primetimeGames(games);
+  const snfHasLocked =
+    !!snf && (snf.isLocked || !!snf.isManuallyLocked || isPastLock(snf, games, now));
+  // Picks for these two games stay private until they lock, and a viewer
+  // always sees their own. Wait until most of the league's picks are
+  // actually visible, or the four boxes would name a winner off one or two
+  // people's picks.
+  const pickersFor = (gameId: string) =>
+    new Set(picks.filter((p) => p.gameId === gameId).map((p) => p.playerId)).size;
+  const primetimePicksIn =
+    !!snf &&
+    !!mnf &&
+    pickersFor(snf.id) >= activePlayers.length * 0.75 &&
+    pickersFor(mnf.id) >= activePlayers.length * 0.75;
+  const showWeekMatrix = !!snf && !!mnf && !mnf.result && snfHasLocked && primetimePicksIn;
+  const matrixWaiting = !!snf && !!mnf && !mnf.result && snfHasLocked && !primetimePicksIn;
+
   // Clicking a player fills every open game with that player's own pick, so
   // they can see where a win-out would leave them. Clicking them again clears it.
   const followPlayer = (id: string) => {
@@ -1165,6 +1322,15 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
       ) : loadError ? (
         <div className="text-sm text-red-600">{loadError}</div>
       ) : (
+        <>
+        {matrixWaiting && (
+          <p className="mb-4 text-sm text-gray-600">
+            Sunday night just locked. Who wins the week shows up here once everyone's picks for the last two games are visible.
+          </p>
+        )}
+        {showWeekMatrix && snf && mnf && (
+          <WeekWinnerMatrix snf={snf} mnf={mnf} games={games} picks={picks} players={players} />
+        )}
         <div className="grid grid-cols-[auto_20rem_auto] gap-3 items-start w-max max-w-full">
           <WhatIfTable
             title={`Week ${currentWeek}`}
@@ -1253,6 +1419,7 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
             onFollow={followPlayer}
           />
         </div>
+        </>
       )}
     </div>
   );
