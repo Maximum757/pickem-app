@@ -159,19 +159,20 @@ async function fetchEspnScoreboard(week: number, seasonType: number): Promise<Es
   throw lastError || new Error("ESPN scoreboard fetch failed");
 }
 
-async function markPicksVisible(gameId: string): Promise<void> {
+async function markPicksVisible(gameId: string) {
   const picksSnap = await db
     .collection("leagues")
     .doc(LEAGUE_ID)
     .collection("picks")
     .where("gameId", "==", gameId)
     .get();
-  if (picksSnap.empty) return;
+  if (picksSnap.empty) return picksSnap;
   const batch = db.batch();
   picksSnap.docs.forEach((pickDoc) => {
     batch.update(pickDoc.ref, { visibleToAll: true });
   });
   await batch.commit();
+  return picksSnap;
 }
 
 async function writePickCounts(gameId: string, picks: FirebaseFirestore.QueryDocumentSnapshot[]): Promise<void> {
@@ -193,7 +194,16 @@ async function writePickCounts(gameId: string, picks: FirebaseFirestore.QueryDoc
     });
 }
 
-async function scoreGameAndRefresh(gameId: string, week: number, winner: string, loser: string, multiplier: number) {
+type GameDelta = { playerId: string; points: number; correct: boolean };
+
+async function scoreGameAndRefresh(
+  gameId: string,
+  week: number,
+  season: number,
+  winner: string,
+  loser: string,
+  multiplier: number
+) {
   const leagueRef = db.collection("leagues").doc(LEAGUE_ID);
   const picksSnap = await leagueRef.collection("picks").where("gameId", "==", gameId).get();
   const picksByTeam = new Map<string, number>();
@@ -208,13 +218,17 @@ async function scoreGameAndRefresh(gameId: string, week: number, winner: string,
     multiplier || 1
   );
 
+  const deltas: GameDelta[] = picksSnap.docs.map((pickDoc) => {
+    const correct = pickDoc.data().pickedTeam === winner;
+    return { playerId: pickDoc.data().playerId as string, points: correct ? points : 0, correct };
+  });
+
   if (!picksSnap.empty) {
     const batch = db.batch();
-    picksSnap.docs.forEach((pickDoc) => {
-      const isCorrect = pickDoc.data().pickedTeam === winner;
+    picksSnap.docs.forEach((pickDoc, i) => {
       batch.update(pickDoc.ref, {
-        isCorrect,
-        pointsAwarded: isCorrect ? points : 0,
+        isCorrect: deltas[i].correct,
+        pointsAwarded: deltas[i].points,
         visibleToAll: true,
       });
     });
@@ -222,31 +236,38 @@ async function scoreGameAndRefresh(gameId: string, week: number, winner: string,
   }
 
   await writePickCounts(gameId, picksSnap.docs);
-  await recalculateWeeklyScores(week);
-  await recalculateSeasonStandings();
+  // Add this game onto the totals already stored. Re-reading every pick in
+  // the season here was most of the daily Firestore quota.
+  await addGameToWeeklyScores(week, deltas);
+  await addGameToStandings(season, deltas);
 }
 
-async function recalculateWeeklyScores(week: number) {
+async function addGameToWeeklyScores(week: number, deltas: GameDelta[]) {
   const leagueRef = db.collection("leagues").doc(LEAGUE_ID);
-  const [playersSnap, picksSnap] = await Promise.all([
-    leagueRef.collection("players").get(),
-    leagueRef.collection("picks").where("week", "==", week).get(),
-  ]);
-  const scores = playersSnap.docs.map((playerDoc) => {
-    const player = playerDoc.data();
-    const theirPicks = picksSnap.docs
-      .map((d) => d.data())
-      .filter((p) => p.playerId === player.id && p.pointsAwarded !== undefined);
-    const pointsAfterMultiplier = theirPicks.reduce((sum, p) => sum + (p.pointsAwarded || 0), 0);
-    return {
-      playerId: player.id,
-      playerName: player.name,
-      gamesCorrect: theirPicks.filter((p) => p.isCorrect).length,
-      pointsRaw: pointsAfterMultiplier,
-      pointsAfterMultiplier,
-    };
+  const ref = leagueRef.collection("weeklyScores").doc(String(week));
+  const snap = await ref.get();
+  const scores: any[] = snap.exists ? snap.data()!.scores.map((s: any) => ({ ...s })) : [];
+  if (!snap.exists) {
+    const playersSnap = await leagueRef.collection("players").get();
+    playersSnap.docs.forEach((playerDoc) => {
+      scores.push({
+        playerId: playerDoc.id,
+        playerName: playerDoc.data().name,
+        gamesCorrect: 0,
+        pointsRaw: 0,
+        pointsAfterMultiplier: 0,
+      });
+    });
+  }
+  const byId = new Map(scores.map((s) => [s.playerId as string, s]));
+  deltas.forEach((d) => {
+    const row = byId.get(d.playerId);
+    if (!row) return;
+    row.pointsRaw += d.points;
+    row.pointsAfterMultiplier += d.points;
+    if (d.correct) row.gamesCorrect += 1;
   });
-  await leagueRef.collection("weeklyScores").doc(String(week)).set({
+  await ref.set({
     leagueId: LEAGUE_ID,
     week,
     scoredAt: Timestamp.now(),
@@ -254,44 +275,24 @@ async function recalculateWeeklyScores(week: number) {
   });
 }
 
-async function recalculateSeasonStandings() {
-  const leagueRef = db.collection("leagues").doc(LEAGUE_ID);
-  const leagueSnap = await leagueRef.get();
-  if (!leagueSnap.exists) return;
-  const season = leagueSnap.data()!.season;
-  const playersSnap = await leagueRef.collection("players").get();
-  const players = playersSnap.docs.map((d) => d.data());
-
-  const playerStats = new Map<string, { totalPoints: number; totalCorrect: number; name: string }>();
-  players.forEach((p: any) => playerStats.set(p.id, { totalPoints: 0, totalCorrect: 0, name: p.name }));
-
-  for (const player of players as any[]) {
-    const picksSnap = await leagueRef.collection("picks").where("playerId", "==", player.id).get();
-    picksSnap.docs.forEach((d) => {
-      const pick = d.data();
-      if (pick.week === 0) return;
-      const stats = playerStats.get(player.id);
-      if (stats && pick.pointsAwarded !== undefined) {
-        stats.totalPoints += pick.pointsAwarded;
-        if (pick.isCorrect) stats.totalCorrect += 1;
-      }
-    });
+async function addGameToStandings(season: number, deltas: GameDelta[]) {
+  const ref = db.collection("leagues").doc(LEAGUE_ID).collection("standings").doc(String(season));
+  const snap = await ref.get();
+  if (!snap.exists) {
+    console.warn("No standings doc yet; this final was not added to season totals.");
+    return;
   }
-
-  const standings = Array.from(playerStats.entries())
-    .map(([playerId, stats]) => ({
-      rank: 0,
-      playerId,
-      playerName: stats.name,
-      totalPoints: stats.totalPoints,
-      totalCorrect: stats.totalCorrect,
-      highestWeek: null as number | null,
-      secondHighestWeek: null as number | null,
-    }))
-    .sort((a, b) => b.totalPoints - a.totalPoints || b.totalCorrect - a.totalCorrect);
+  const standings: any[] = snap.data()!.standings.map((s: any) => ({ ...s }));
+  const byId = new Map(standings.map((s) => [s.playerId as string, s]));
+  deltas.forEach((d) => {
+    const row = byId.get(d.playerId);
+    if (!row) return;
+    row.totalPoints += d.points;
+    if (d.correct) row.totalCorrect += 1;
+  });
+  standings.sort((a, b) => b.totalPoints - a.totalPoints || b.totalCorrect - a.totalCorrect);
   standings.forEach((s, i) => (s.rank = i + 1));
-
-  await leagueRef.collection("standings").doc(String(season)).set({
+  await ref.set({
     leagueId: LEAGUE_ID,
     season,
     lastUpdatedAt: Timestamp.now(),
@@ -335,7 +336,14 @@ async function revealTiebreakerGuesses(
 
 async function lockPassedGames() {
   const leagueRef = db.collection("leagues").doc(LEAGUE_ID);
-  const gamesSnap = await leagueRef.collection("games").get();
+  const leagueSnap = await leagueRef.get();
+  if (!leagueSnap.exists) throw new Error(`League ${LEAGUE_ID} not found`);
+  const currentWeek = leagueSnap.data()!.currentWeek as number;
+  const season = leagueSnap.data()!.season as number;
+  // One week, not all 18. A full-season read every 15 minutes was enough
+  // on its own to burn through the free daily quota.
+  const gamesSnap = await leagueRef.collection("games").where("week", "==", currentWeek).get();
+  console.log(`Week ${currentWeek}: ${gamesSnap.size} game(s)`);
   const now = Timestamp.now();
   const extraLockedIds = new Set<string>();
 
@@ -395,8 +403,7 @@ async function lockPassedGames() {
     });
     await batch.commit();
     for (const gameDoc of toLock) {
-      await markPicksVisible(gameDoc.id);
-      const picksSnap = await leagueRef.collection("picks").where("gameId", "==", gameDoc.id).get();
+      const picksSnap = await markPicksVisible(gameDoc.id);
       await writePickCounts(gameDoc.id, picksSnap.docs);
     }
   }
@@ -471,7 +478,7 @@ async function lockPassedGames() {
       live: FieldValue.delete(),
     });
     extraLockedIds.add(doc.id);
-    await scoreGameAndRefresh(doc.id, g.week, espnWinner, espnLoser, g.playoffMultiplier || 1);
+    await scoreGameAndRefresh(doc.id, g.week, season, espnWinner, espnLoser, g.playoffMultiplier || 1);
     finalsEntered++;
   }
 
