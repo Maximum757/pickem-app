@@ -1128,14 +1128,21 @@ function WeekWinnerMatrix({
   const snfTeams = [snf.awayTeam, snf.homeTeam];
   const mnfTeams = [mnf.awayTeam, mnf.homeTeam];
 
-  const headerTeam = (team: string, actual: string | undefined) => {
+  const snfWinner = snf.result?.winner;
+  const columnIrrelevant = (team: string) => !!snf.result && snfWinner !== team;
+
+  const headerTeam = (team: string, actual: string | undefined, dimmed = false) => {
     const colors = getTeamColor(team);
     const won = actual === team;
     return (
       <th
         key={team}
         className="px-1 py-2 text-sm font-bold text-center"
-        style={{ background: colors.bg, color: colors.fg }}
+        style={
+          dimmed
+            ? { background: "#e5e7eb", color: "#9ca3af" }
+            : { background: colors.bg, color: colors.fg }
+        }
       >
         {team}
         {won && <div className="text-[10px] font-semibold opacity-80">Final</div>}
@@ -1160,7 +1167,7 @@ function WeekWinnerMatrix({
         <thead>
           <tr>
             <th />
-            {snfTeams.map((team) => headerTeam(team, snf.result?.winner))}
+            {snfTeams.map((team) => headerTeam(team, snfWinner, columnIrrelevant(team)))}
           </tr>
         </thead>
         <tbody>
@@ -1170,26 +1177,31 @@ function WeekWinnerMatrix({
               {snfTeams.map((snfTeam) => {
                 const cell = leadersFor(snfTeam, mnfTeam);
                 const tied = cell.leaders.length > 1;
-                const decided =
-                  snf.result?.winner === snfTeam && mnf.result?.winner === mnfTeam;
+                const irrelevant = columnIrrelevant(snfTeam);
+                const decided = snfWinner === snfTeam && mnf.result?.winner === mnfTeam;
                 return (
                   <td
                     key={snfTeam}
                     className={`border-t border-l px-1.5 py-2 text-center align-top h-full ${
-                      decided ? "bg-green-50" : ""
+                      irrelevant ? "bg-gray-100 text-gray-400" : decided ? "bg-green-50" : ""
                     }`}
                   >
                     <div className="flex flex-col items-center h-[8.75rem]">
                       {cell.points > 0 ? (
                         <>
-                          <div className="text-[10px] text-gray-500 mb-1">
+                          <div className={`text-[10px] mb-1 ${irrelevant ? "text-gray-400" : "text-gray-500"}`}>
                             {cell.points} pts{tied ? " · tie" : ""}
                           </div>
                           {cell.leaders.map((l, i) => (
-                            <div key={l.id} className={tied ? `text-amber-800 ${i > 0 ? "mt-1.5" : ""}` : ""}>
-                              <div className="text-sm font-semibold leading-tight">{l.name}</div>
+                            <div
+                              key={l.id}
+                              className={tied && !irrelevant ? `text-amber-800 ${i > 0 ? "mt-1.5" : ""}` : i > 0 ? "mt-1.5" : ""}
+                            >
+                              <div className={`text-sm font-semibold leading-tight ${irrelevant ? "text-gray-400" : ""}`}>
+                                {l.name}
+                              </div>
                               {tied && (
-                                <div className="text-[10px] text-gray-500 font-normal">
+                                <div className={`text-[10px] font-normal ${irrelevant ? "text-gray-400" : "text-gray-500"}`}>
                                   Tiebreaker {l.guess ?? "—"}
                                 </div>
                               )}
