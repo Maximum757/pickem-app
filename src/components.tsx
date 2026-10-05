@@ -1134,7 +1134,7 @@ function WeekWinnerMatrix({
     return (
       <th
         key={team}
-        className="px-3 py-2 text-sm font-bold text-center"
+        className="px-1 py-2 text-sm font-bold text-center"
         style={{ background: colors.bg, color: colors.fg }}
       >
         {team}
@@ -1144,17 +1144,22 @@ function WeekWinnerMatrix({
   };
 
   return (
-    <div className="mb-4 border rounded bg-white overflow-hidden w-max max-w-full">
+    <div className="mt-3 border rounded bg-white overflow-hidden w-full">
       <div className="bg-gray-100 px-3 py-1.5 text-xs font-bold">
         Who wins the week
       </div>
       <p className="px-3 pt-2 text-[10px] text-gray-500">
         Sunday night across the top, Monday night down the side.
       </p>
-      <table className="border-separate border-spacing-0">
+      <table className="w-full table-fixed border-separate border-spacing-0">
+        <colgroup>
+          <col className="w-11" />
+          <col />
+          <col />
+        </colgroup>
         <thead>
           <tr>
-            <th className="px-2" />
+            <th />
             {snfTeams.map((team) => headerTeam(team, snf.result?.winner))}
           </tr>
         </thead>
@@ -1170,32 +1175,31 @@ function WeekWinnerMatrix({
                 return (
                   <td
                     key={snfTeam}
-                    className={`border-t border-l px-3 py-2 text-center align-middle min-w-[9rem] ${
+                    className={`border-t border-l px-1.5 py-2 text-center align-top h-full ${
                       decided ? "bg-green-50" : ""
                     }`}
                   >
-                    {cell.points > 0 ? (
-                      <div className="text-sm leading-snug">
-                        {cell.leaders.map((l) => (
-                          <div key={l.id} className={tied ? "text-amber-800 mt-1.5 first:mt-0" : "font-semibold"}>
-                            <div>{l.name}</div>
-                            {tied && (
-                              <div className="text-[10px] text-gray-500">
-                                Tiebreaker {l.guess ?? "—"}
-                              </div>
-                            )}
+                    <div className="flex flex-col items-center h-[8.75rem]">
+                      {cell.points > 0 ? (
+                        <>
+                          <div className="text-[10px] text-gray-500 mb-1">
+                            {cell.points} pts{tied ? " · tie" : ""}
                           </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-gray-400">—</div>
-                    )}
-                    {cell.points > 0 && (
-                      <div className="text-[10px] text-gray-500 mt-0.5">
-                        {tied ? "tie · " : ""}
-                        {cell.points} pts
-                      </div>
-                    )}
+                          {cell.leaders.map((l, i) => (
+                            <div key={l.id} className={tied ? `text-amber-800 ${i > 0 ? "mt-1.5" : ""}` : ""}>
+                              <div className="text-sm font-semibold leading-tight">{l.name}</div>
+                              {tied && (
+                                <div className="text-[10px] text-gray-500 font-normal">
+                                  Tiebreaker {l.guess ?? "—"}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </>
+                      ) : (
+                        <div className="text-sm text-gray-400">—</div>
+                      )}
+                    </div>
                   </td>
                 );
               })}
@@ -1307,21 +1311,11 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
   const pickedCount = pendingGames.filter((g) => chosen[g.id]).length;
 
   const { snf, mnf } = primetimeGames(games);
+  // Sunday night locking also locks Monday night, so both games' picks are
+  // public at that moment. Show the grid then, until Monday night is final.
   const snfHasLocked =
     !!snf && (snf.isLocked || !!snf.isManuallyLocked || isPastLock(snf, games, now));
-  // Picks for these two games stay private until they lock, and a viewer
-  // always sees their own. Wait until most of the league's picks are
-  // actually visible, or the four boxes would name a winner off one or two
-  // people's picks.
-  const pickersFor = (gameId: string) =>
-    new Set(picks.filter((p) => p.gameId === gameId).map((p) => p.playerId)).size;
-  const primetimePicksIn =
-    !!snf &&
-    !!mnf &&
-    pickersFor(snf.id) >= activePlayers.length * 0.75 &&
-    pickersFor(mnf.id) >= activePlayers.length * 0.75;
-  const showWeekMatrix = !!snf && !!mnf && !mnf.result && snfHasLocked && primetimePicksIn;
-  const matrixWaiting = !!snf && !!mnf && !mnf.result && snfHasLocked && !primetimePicksIn;
+  const showWeekMatrix = !!snf && !!mnf && !mnf.result && snfHasLocked;
 
   // Clicking a player fills every open game with that player's own pick, so
   // they can see where a win-out would leave them. Clicking them again clears it.
@@ -1354,22 +1348,6 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
       ) : loadError ? (
         <div className="text-sm text-red-600">{loadError}</div>
       ) : (
-        <>
-        {matrixWaiting && (
-          <p className="mb-4 text-sm text-gray-600">
-            Sunday night just locked. Who wins the week shows up here once everyone's picks for the last two games are visible.
-          </p>
-        )}
-        {showWeekMatrix && snf && mnf && (
-          <WeekWinnerMatrix
-            snf={snf}
-            mnf={mnf}
-            games={games}
-            picks={picks}
-            players={players}
-            guessByPlayer={guessByPlayer}
-          />
-        )}
         <div className="grid grid-cols-[auto_20rem_auto] gap-3 items-start w-max max-w-full">
           <WhatIfTable
             title={`Week ${currentWeek}`}
@@ -1379,6 +1357,7 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
             onFollow={followPlayer}
           />
 
+          <div>
           <div className="border rounded bg-white overflow-hidden">
             <div className="bg-gray-100 px-2 py-1.5 text-xs font-bold flex items-center justify-between">
               <span>{includeUnlocked ? "Games not final" : "Locked games"}</span>
@@ -1449,6 +1428,17 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
               </div>
             )}
           </div>
+          {!includeUnlocked && showWeekMatrix && snf && mnf && (
+            <WeekWinnerMatrix
+              snf={snf}
+              mnf={mnf}
+              games={games}
+              picks={picks}
+              players={players}
+              guessByPlayer={guessByPlayer}
+            />
+          )}
+          </div>
 
           <WhatIfTable
             title="Season"
@@ -1458,7 +1448,6 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
             onFollow={followPlayer}
           />
         </div>
-        </>
       )}
     </div>
   );
