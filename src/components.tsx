@@ -1135,90 +1135,79 @@ function WeekWinnerMatrix({
     const colors = getTeamColor(team);
     const won = actual === team;
     return (
-      <th
+      <div
         key={team}
-        className="px-1 py-2 text-sm font-bold text-center"
+        className="px-1 py-2 text-sm font-bold text-center flex flex-col items-center justify-center"
         style={
           dimmed
             ? { background: "#e5e7eb", color: "#9ca3af" }
             : { background: colors.bg, color: colors.fg }
         }
       >
-        {team}
+        <div>{team}</div>
         {won && <div className="text-[10px] font-semibold opacity-80">Final</div>}
-      </th>
+      </div>
     );
   };
 
   return (
-    <div className="mt-3 border rounded bg-white overflow-hidden w-full">
-      <div className="bg-gray-100 px-3 py-1.5 text-xs font-bold">
+    <div className="mt-3 border rounded bg-white overflow-hidden w-full flex-1 flex flex-col min-h-0">
+      <div className="bg-gray-100 px-3 py-1.5 text-xs font-bold shrink-0">
         Who wins the week
       </div>
-      <p className="px-3 pt-2 text-[10px] text-gray-500">
+      <p className="px-3 pt-2 pb-1 text-[10px] text-gray-500 shrink-0">
         Sunday night across the top, Monday night down the side.
       </p>
-      <table className="w-full table-fixed border-separate border-spacing-0">
-        <colgroup>
-          <col className="w-11" />
-          <col />
-          <col />
-        </colgroup>
-        <thead>
-          <tr>
-            <th />
-            {snfTeams.map((team) => headerTeam(team, snfWinner, columnIrrelevant(team)))}
-          </tr>
-        </thead>
-        <tbody>
-          {mnfTeams.map((mnfTeam) => (
-            <tr key={mnfTeam}>
-              {headerTeam(mnfTeam, mnf.result?.winner)}
-              {snfTeams.map((snfTeam) => {
-                const cell = leadersFor(snfTeam, mnfTeam);
-                const tied = cell.leaders.length > 1;
-                const irrelevant = columnIrrelevant(snfTeam);
-                const decided = snfWinner === snfTeam && mnf.result?.winner === mnfTeam;
-                return (
-                  <td
-                    key={snfTeam}
-                    className={`border-t border-l px-1.5 py-2 text-center align-top h-full ${
-                      irrelevant ? "bg-gray-100 text-gray-400" : decided ? "bg-green-50" : ""
-                    }`}
-                  >
-                    <div className="flex flex-col items-center">
-                      {cell.points > 0 ? (
-                        <>
-                          <div className={`text-[10px] mb-1 ${irrelevant ? "text-gray-400" : "text-gray-500"}`}>
-                            {cell.points} pts{tied ? " · tie" : ""}
-                          </div>
-                          {cell.leaders.map((l, i) => (
-                            <div
-                              key={l.id}
-                              className={tied && !irrelevant ? `text-amber-800 ${i > 0 ? "mt-1.5" : ""}` : i > 0 ? "mt-1.5" : ""}
-                            >
-                              <div className={`text-sm font-semibold leading-tight ${irrelevant ? "text-gray-400" : ""}`}>
-                                {l.name}
-                              </div>
-                              {tied && (
-                                <div className={`text-[10px] font-normal ${irrelevant ? "text-gray-400" : "text-gray-500"}`}>
-                                  Tiebreaker {l.guess ?? "—"}
-                                </div>
-                              )}
+      <div className="flex-1 grid grid-cols-[2.75rem_1fr_1fr] grid-rows-[auto_1fr_1fr] min-h-0">
+        <div />
+        {snfTeams.map((team) => headerTeam(team, snfWinner, columnIrrelevant(team)))}
+        {mnfTeams.map((mnfTeam) => (
+          <React.Fragment key={mnfTeam}>
+            {headerTeam(mnfTeam, mnf.result?.winner)}
+            {snfTeams.map((snfTeam) => {
+              const cell = leadersFor(snfTeam, mnfTeam);
+              const tied = cell.leaders.length > 1;
+              const irrelevant = columnIrrelevant(snfTeam);
+              const decided = snfWinner === snfTeam && mnf.result?.winner === mnfTeam;
+              return (
+                <div
+                  key={snfTeam}
+                  className={`border-t border-l px-1.5 py-2 text-center ${
+                    irrelevant ? "bg-gray-100 text-gray-400" : decided ? "bg-green-50" : ""
+                  }`}
+                >
+                  <div className="flex flex-col items-center">
+                    {cell.points > 0 ? (
+                      <>
+                        <div className={`text-[10px] mb-1 ${irrelevant ? "text-gray-400" : "text-gray-500"}`}>
+                          {cell.points} pts{tied ? " · tie" : ""}
+                        </div>
+                        {cell.leaders.map((l, i) => (
+                          <div
+                            key={l.id}
+                            className={tied && !irrelevant ? `text-amber-800 ${i > 0 ? "mt-1.5" : ""}` : i > 0 ? "mt-1.5" : ""}
+                          >
+                            <div className={`text-sm font-semibold leading-tight ${irrelevant ? "text-gray-400" : ""}`}>
+                              {l.name}
                             </div>
-                          ))}
-                        </>
-                      ) : (
-                        <div className="text-sm text-gray-400">—</div>
-                      )}
-                    </div>
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                            {tied && (
+                              <div className={`text-[10px] font-normal ${irrelevant ? "text-gray-400" : "text-gray-500"}`}>
+                                Tiebreaker {l.guess ?? "—"}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </>
+                    ) : (
+                      <div className="text-sm text-gray-400">—</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </React.Fragment>
+        ))}
+      </div>
       {othersStillOpen && (
         <p className="px-3 py-1.5 text-[10px] text-gray-500 border-t">
           Games still in progress aren't counted yet, so these names can change as the rest of the slate finishes.
@@ -1369,8 +1358,8 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
             onFollow={followPlayer}
           />
 
-          <div>
-          <div className="border rounded bg-white overflow-hidden">
+          <div className={!includeUnlocked && showWeekMatrix ? "self-stretch flex flex-col" : ""}>
+          <div className="border rounded bg-white overflow-hidden shrink-0">
             <div className="bg-gray-100 px-2 py-1.5 text-xs font-bold flex items-center justify-between">
               <span>{includeUnlocked ? "Games not final" : "Locked games"}</span>
               {pickedCount > 0 && (
