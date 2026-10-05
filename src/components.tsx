@@ -1062,12 +1062,14 @@ function WeekWinnerMatrix({
   games,
   picks,
   players,
+  guessByPlayer,
 }: {
   snf: schema.UIGame;
   mnf: schema.UIGame;
   games: schema.UIGame[];
   picks: schema.PickDoc[];
   players: schema.PlayerDoc[];
+  guessByPlayer: Record<string, number>;
 }) {
   const picksByGame = new Map<string, schema.PickDoc[]>();
   picks.forEach((p) => {
@@ -1112,10 +1114,14 @@ function WeekWinnerMatrix({
         ids = [p.id];
       } else if (pts === best) ids.push(p.id);
     });
-    const names = ids
-      .map((id) => active.find((p) => p.id === id)?.name || "Unknown")
-      .sort((a, b) => a.localeCompare(b));
-    return { names, points: best };
+    const leaders = ids
+      .map((id) => ({
+        id,
+        name: active.find((p) => p.id === id)?.name || "Unknown",
+        guess: guessByPlayer[id],
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { leaders, points: best };
   };
 
   const othersStillOpen = games.some((g) => g.id !== snf.id && g.id !== mnf.id && !g.result);
@@ -1158,7 +1164,7 @@ function WeekWinnerMatrix({
               {headerTeam(mnfTeam, mnf.result?.winner)}
               {snfTeams.map((snfTeam) => {
                 const cell = leadersFor(snfTeam, mnfTeam);
-                const tied = cell.names.length > 1;
+                const tied = cell.leaders.length > 1;
                 const decided =
                   snf.result?.winner === snfTeam && mnf.result?.winner === mnfTeam;
                 return (
@@ -1168,9 +1174,22 @@ function WeekWinnerMatrix({
                       decided ? "bg-green-50" : ""
                     }`}
                   >
-                    <div className={`text-sm leading-snug ${tied ? "text-amber-800" : "font-semibold"}`}>
-                      {cell.points > 0 ? cell.names.join(" & ") : "—"}
-                    </div>
+                    {cell.points > 0 ? (
+                      <div className="text-sm leading-snug">
+                        {cell.leaders.map((l) => (
+                          <div key={l.id} className={tied ? "text-amber-800 mt-1.5 first:mt-0" : "font-semibold"}>
+                            <div>{l.name}</div>
+                            {tied && (
+                              <div className="text-[10px] text-gray-500">
+                                Tiebreaker {l.guess ?? "—"}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-gray-400">—</div>
+                    )}
                     {cell.points > 0 && (
                       <div className="text-[10px] text-gray-500 mt-0.5">
                         {tied ? "tie · " : ""}
@@ -1194,10 +1213,11 @@ function WeekWinnerMatrix({
 }
 
 export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: boolean }) {
-  const { leagueId, playerId, games, players, standings, currentWeek, setCurrentWeek, league, loading } =
+  const { leagueId, playerId, games, players, standings, currentWeek, setCurrentWeek, league, loading, isCommissioner } =
     useLeague();
   const now = useNow();
   const [picks, setPicks] = useState<schema.PickDoc[]>([]);
+  const [guessByPlayer, setGuessByPlayer] = useState<Record<string, number>>({});
   const [loadingPicks, setLoadingPicks] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [chosen, setChosen] = useState<{ [gameId: string]: string }>({});
@@ -1209,14 +1229,26 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
     setLoadError(null);
     setChosen({});
     setFollowedId(null);
-    (includeUnlocked
+    setGuessByPlayer({});
+    const picksPromise = includeUnlocked
       ? firebaseUtils.getAllPicksForWeek(leagueId, currentWeek)
-      : firebaseUtils.getVisiblePicksForWeek(leagueId, currentWeek, playerId)
-    )
-      .then(setPicks)
+      : firebaseUtils.getVisiblePicksForWeek(leagueId, currentWeek, playerId);
+    const guessesPromise =
+      includeUnlocked || isCommissioner
+        ? firebaseUtils.getAllTiebreakerGuessesForWeek(leagueId, currentWeek)
+        : firebaseUtils.getVisibleTiebreakerGuessesForWeek(leagueId, currentWeek, playerId);
+    Promise.all([picksPromise, guessesPromise])
+      .then(([picksData, guesses]) => {
+        setPicks(picksData);
+        const byPlayer: Record<string, number> = {};
+        guesses.forEach((g) => {
+          byPlayer[g.playerId] = g.guess;
+        });
+        setGuessByPlayer(byPlayer);
+      })
       .catch((err) => setLoadError(`Failed to load picks: ${err}`))
       .finally(() => setLoadingPicks(false));
-  }, [leagueId, playerId, currentWeek, includeUnlocked]);
+  }, [leagueId, playerId, currentWeek, includeUnlocked, isCommissioner]);
 
   const pendingGames = games
     .filter((g) => {
@@ -1329,7 +1361,14 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
           </p>
         )}
         {showWeekMatrix && snf && mnf && (
-          <WeekWinnerMatrix snf={snf} mnf={mnf} games={games} picks={picks} players={players} />
+          <WeekWinnerMatrix
+            snf={snf}
+            mnf={mnf}
+            games={games}
+            picks={picks}
+            players={players}
+            guessByPlayer={guessByPlayer}
+          />
         )}
         <div className="grid grid-cols-[auto_20rem_auto] gap-3 items-start w-max max-w-full">
           <WhatIfTable
