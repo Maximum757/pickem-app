@@ -1186,7 +1186,7 @@ function WeekWinnerMatrix({
                       irrelevant ? "bg-gray-100 text-gray-400" : decided ? "bg-green-50" : ""
                     }`}
                   >
-                    <div className="flex flex-col items-center h-[8.75rem]">
+                    <div className="flex flex-col items-center">
                       {cell.points > 0 ? (
                         <>
                           <div className={`text-[10px] mb-1 ${irrelevant ? "text-gray-400" : "text-gray-500"}`}>
