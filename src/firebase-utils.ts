@@ -960,18 +960,9 @@ export async function setWeeklyTiebreakerAnswer(
 }
 
 /**
- * Determines who actually won this week's tiebreaker and writes it onto
- * the (openly-readable) tiebreaker doc — the actual resolution logic that
- * was always described ("closest" or "closest without going over wins")
- * but never implemented; weekly ties were just being split evenly instead
- * of ever actually being broken. Requires commissioner-level access (needs
- * every player's guess), so this only ever runs from setWeeklyTiebreakerAnswer,
- * called by the commissioner.
- */
-/**
- * Who wins a tiebreaker among a specific set of players (usually the people
- * tied for the weekly lead). Closest overall in the field is a different
- * question — this is the only result that actually awards the week.
+ * Who wins a tiebreaker among a specific set of players (the people tied
+ * for the weekly points lead). Closest overall in the field is a different
+ * question — only a winner among the tied leaders awards the week.
  */
 export function winningTiebreakerPlayerIds(
   candidateIds: string[],
@@ -1008,16 +999,31 @@ export async function resolveTiebreakerWinner(leagueId: string, week: number): P
   const tb = tbSnap.data() as schema.WeeklyTiebreakerDoc;
   if (tb.answer === null) return;
 
-  const guesses = await getAllTiebreakerGuessesForWeek(leagueId, week);
+  const [guesses, picks] = await Promise.all([
+    getAllTiebreakerGuessesForWeek(leagueId, week),
+    getAllPicksForWeek(leagueId, week),
+  ]);
   if (guesses.length === 0) return;
 
+  // Only the players sharing the points lead are in the tiebreaker. The
+  // closest guess in the rest of the league does not win the week, and
+  // recording that person makes standings give up and split the pot.
+  const pointsByPlayer = new Map<string, number>();
+  picks.forEach((p) => {
+    if (p.pointsAwarded === undefined) return;
+    pointsByPlayer.set(p.playerId, (pointsByPlayer.get(p.playerId) || 0) + p.pointsAwarded);
+  });
+  let maxPts = 0;
+  pointsByPlayer.forEach((pts) => {
+    if (pts > maxPts) maxPts = pts;
+  });
+  const leaders = [...pointsByPlayer.entries()]
+    .filter(([, pts]) => pts === maxPts && pts > 0)
+    .map(([playerId]) => playerId);
+  if (leaders.length === 0) return;
+
   const guessMap = new Map(guesses.map((g) => [g.playerId, g.guess]));
-  const winnerIds = winningTiebreakerPlayerIds(
-    guesses.map((g) => g.playerId),
-    guessMap,
-    tb.answer,
-    tb.rule
-  );
+  const winnerIds = winningTiebreakerPlayerIds(leaders, guessMap, tb.answer, tb.rule);
   await updateDoc(tiebreakerRef, { resolvedWinnerIds: winnerIds });
 }
 
