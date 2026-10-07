@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from "react";
 import { useLeague } from "./LeagueContext";
 import { useAuth } from "./AuthContext";
-import { getTeamColor, getTeamDisplayName, getTeamLogoUrl } from "./teamColors";
+import { getTeamColor, getTeamDisplayName, getTeamLogoUrl, TEAM_FULL_NAMES } from "./teamColors";
 import * as firebaseUtils from "./firebase-utils";
 import * as schema from "./firestore-schema";
 import { effectiveLockTime, isPastLock, primetimeGames } from "./lockTime";
@@ -37,6 +37,21 @@ function formatKickoff(date: Date): string {
 // A tie is stored as winner/loser "TIE" so no pick matches: every pick is a
 // loss and nobody scores.
 const TIE_RESULT = "TIE";
+
+// Teams with no game this week. Null when the slate isn't the 32 NFL clubs
+// (Week 0's college test games), so that page doesn't list 30 "byes".
+function byeTeamsForWeek(games: { homeTeam: string; awayTeam: string }[]): string[] | null {
+  if (games.length === 0) return null;
+  const playing = new Set<string>();
+  for (const g of games) {
+    if (!TEAM_FULL_NAMES[g.homeTeam] || !TEAM_FULL_NAMES[g.awayTeam]) return null;
+    playing.add(g.homeTeam);
+    playing.add(g.awayTeam);
+  }
+  return Object.keys(TEAM_FULL_NAMES)
+    .filter((t) => !playing.has(t))
+    .sort();
+}
 
 function finalScoreLine(game: schema.UIGame): string | null {
   const r = game.result;
@@ -337,6 +352,7 @@ export function PicksScreen() {
   const picksComplete = totalGames > 0 && picksMade === totalGames;
   const weeklyCorrect = games.filter((g) => userPickResults[g.id]?.isCorrect === true).length;
   const weeklyPoints = games.reduce((sum, g) => sum + (userPickResults[g.id]?.pointsAwarded || 0), 0);
+  const byeTeams = byeTeamsForWeek(games);
 
   return (
     <div className="p-4">
@@ -414,44 +430,62 @@ export function PicksScreen() {
           be blocked just because the commissioner hasn't decided on this
           week's tiebreaker question yet. The guess itself doesn't depend on
           the question existing; only the display text does. */}
-      <div className="border rounded-lg p-4 mb-4 bg-gray-50">
-        <div className="text-xs uppercase tracking-wide text-gray-500 font-semibold mb-1">
-          This week's tiebreaker
-        </div>
-        <div className="text-sm font-semibold mb-1">
-          {tiebreakerQuestion || (
-            <span className="text-gray-500 font-normal italic">
-              Not set yet — you can still enter your guess now
-            </span>
-          )}
-        </div>
-        {tiebreakerRule === "closest_without_going_over" ? (
-          <div className="inline-block text-sm font-bold text-amber-900 bg-amber-100 border border-amber-300 rounded px-2 py-1 mb-2">
-            Price Is Right rules in effect: closest without going over wins
+      <div className="border rounded-lg p-4 mb-4 bg-gray-50 flex items-start gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="text-xs uppercase tracking-wide text-gray-500 font-semibold mb-1">
+            This week's tiebreaker
           </div>
-        ) : tiebreakerRule === "closest" ? (
-          <div className="text-xs text-gray-500 mb-1">Closest guess wins (going over is fine)</div>
-        ) : null}
-        {tiebreakerAnswer !== null && (
-          <div className="text-xs font-bold text-green-700 mb-3">
-            Correct answer: {tiebreakerAnswer}
+          <div className="text-sm font-semibold mb-1">
+            {tiebreakerQuestion || (
+              <span className="text-gray-500 font-normal italic">
+                Not set yet — you can still enter your guess now
+              </span>
+            )}
+          </div>
+          {tiebreakerRule === "closest_without_going_over" ? (
+            <div className="inline-block text-sm font-bold text-amber-900 bg-amber-100 border border-amber-300 rounded px-2 py-1 mb-2">
+              Price Is Right rules in effect: closest without going over wins
+            </div>
+          ) : tiebreakerRule === "closest" ? (
+            <div className="text-xs text-gray-500 mb-1">Closest guess wins (going over is fine)</div>
+          ) : null}
+          {tiebreakerAnswer !== null && (
+            <div className="text-xs font-bold text-green-700 mb-3">
+              Correct answer: {tiebreakerAnswer}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">Enter Tiebreaker ➞➞</span>
+            <input
+              type="number"
+              value={tbDraft}
+              onChange={(e) => setTbDraft(e.target.value)}
+              onBlur={handleTiebreakerBlur}
+              disabled={tiebreakerLocked}
+              className="w-24 border rounded px-2 py-1 disabled:bg-gray-100 disabled:text-gray-500"
+            />
+            {tbSaved && <span className="text-xs text-green-600">✓ Saved</span>}
+            {tiebreakerLocked && (
+              <span className="text-xs font-semibold text-gray-500">🔒 Locked</span>
+            )}
+          </div>
+        </div>
+        {byeTeams && (
+          <div className="shrink-0 border-l pl-4 w-28">
+            <div className="text-xs uppercase tracking-wide text-gray-500 font-semibold mb-1">
+              Bye
+            </div>
+            {byeTeams.length === 0 ? (
+              <div className="text-sm text-gray-500">None</div>
+            ) : (
+              <ul className="text-sm font-semibold leading-snug">
+                {byeTeams.map((team) => (
+                  <li key={team}>{team}</li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-600">Enter Tiebreaker ➞➞</span>
-          <input
-            type="number"
-            value={tbDraft}
-            onChange={(e) => setTbDraft(e.target.value)}
-            onBlur={handleTiebreakerBlur}
-            disabled={tiebreakerLocked}
-            className="w-24 border rounded px-2 py-1 disabled:bg-gray-100 disabled:text-gray-500"
-          />
-          {tbSaved && <span className="text-xs text-green-600">✓ Saved</span>}
-          {tiebreakerLocked && (
-            <span className="text-xs font-semibold text-gray-500">🔒 Locked</span>
-          )}
-        </div>
       </div>
 
       <div className="space-y-3">
@@ -3012,6 +3046,28 @@ function smoothLinePath(xs: number[], ys: number[], tension = 0.5): string {
 
 type RecapPickCell = { pickedTeam: string; isCorrect?: boolean; pointsAwarded?: number };
 
+type ProgressSeries = {
+  id: string;
+  color: string;
+  values: number[];
+  label: string;
+  total: number;
+};
+
+function progressSeries(
+  player: schema.PlayerDoc,
+  color: string,
+  values: number[]
+): ProgressSeries {
+  return {
+    id: player.id,
+    color,
+    values,
+    label: player.name.length > 18 ? `${player.name.slice(0, 17)}…` : player.name,
+    total: values[values.length - 1] ?? 0,
+  };
+}
+
 function WeeklyProgressChart({
   games,
   rankedPlayers,
@@ -3041,14 +3097,40 @@ function WeeklyProgressChart({
         return cum;
       }),
     ];
-    return {
-      player,
-      color: colorByPlayerId[player.id] || PLAYER_LINE_COLORS[0],
-      values,
-      label: player.name.length > 18 ? `${player.name.slice(0, 17)}…` : player.name,
-      total: values[values.length - 1] ?? 0,
-    };
+    return progressSeries(player, colorByPlayerId[player.id] || PLAYER_LINE_COLORS[0], values);
   });
+
+  return (
+    <ProgressLineChart
+      series={series}
+      xLabels={[
+        "Start",
+        ...finalGames.map((g) => g.result?.winner || `${g.awayTeam}@${g.homeTeam}`),
+      ]}
+      fromZero={!startingPoints}
+      width={width}
+      height={height}
+      ariaLabel="Cumulative weekly points after each final, in pick-sheet order"
+    />
+  );
+}
+
+function ProgressLineChart({
+  series,
+  xLabels,
+  fromZero,
+  width,
+  height,
+  ariaLabel,
+}: {
+  series: ProgressSeries[];
+  xLabels: string[];
+  fromZero: boolean;
+  width: number;
+  height: number;
+  ariaLabel: string;
+}) {
+  if (series.length === 0 || xLabels.length < 2) return null;
 
   // Players with identical point paths draw exactly on top of each other,
   // so each one in a shared path gets an interleaved dash of its own color.
@@ -3056,23 +3138,22 @@ function WeeklyProgressChart({
   const sharedPaths = new Map<string, string[]>();
   series.forEach((s) => {
     const key = s.values.join(",");
-    sharedPaths.set(key, [...(sharedPaths.get(key) || []), s.player.id]);
+    sharedPaths.set(key, [...(sharedPaths.get(key) || []), s.id]);
   });
-  const dashFor = (s: (typeof series)[number]) => {
+  const dashFor = (s: ProgressSeries) => {
     const group = sharedPaths.get(s.values.join(",")) || [];
     if (group.length < 2) return null;
-    const idx = group.indexOf(s.player.id);
+    const idx = group.indexOf(s.id);
     return {
       dasharray: `${DASH} ${DASH * (group.length - 1)}`,
       dashoffset: -idx * DASH,
-      sharedWith: group.length - 1,
     };
   };
 
-  // Season mode starts everyone at their prior total, so the axis floor
-  // follows the lowest starting point instead of wasting space down to 0.
+  // Season-within-a-week starts everyone at their prior total, so the axis
+  // floor follows the lowest starting point instead of wasting space down to 0.
   const allValues = series.flatMap((s) => s.values);
-  const lo = startingPoints ? Math.min(...allValues) : 0;
+  const lo = fromZero ? 0 : Math.min(...allValues);
   const hi = Math.max(lo + 1, ...allValues);
   const rangeTicks = chartYTicks(niceChartMax(hi - lo));
   const yStep = rangeTicks.length > 1 ? rangeTicks[1] - rangeTicks[0] : 1;
@@ -3089,7 +3170,7 @@ function WeeklyProgressChart({
   const padB = 40;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
-  const xStep = innerW / finalGames.length;
+  const xStep = innerW / (xLabels.length - 1);
 
   const xAt = (i: number) => padL + i * xStep;
   const yAt = (v: number) => padT + innerH - ((v - yMin) / (yMax - yMin)) * innerH;
@@ -3098,7 +3179,7 @@ function WeeklyProgressChart({
   // can: labels that would collide merge into a block centered on the
   // average of their dots, so the nudge is split up and down evenly.
   const LABEL_GAP = 20;
-  const lastIdx = finalGames.length;
+  const lastIdx = xLabels.length - 1;
   const endLabels = series
     .map((s) => ({ s, dotY: yAt(s.total), y: yAt(s.total) }))
     .sort((a, b) => a.dotY - b.dotY || b.s.total - a.s.total);
@@ -3130,9 +3211,9 @@ function WeeklyProgressChart({
           viewBox={`0 0 ${W} ${H}`}
           className="block"
           role="img"
-          aria-label="Cumulative weekly points after each final, in pick-sheet order"
+          aria-label={ariaLabel}
         >
-          <title>Cumulative weekly points after each final</title>
+          <title>{ariaLabel}</title>
           {yTicks.map((tick) => {
             const y = yAt(tick);
             return (
@@ -3164,7 +3245,7 @@ function WeeklyProgressChart({
             const ys = s.values.map((v) => yAt(v));
             const dash = dashFor(s);
             return (
-              <g key={s.player.id}>
+              <g key={s.id}>
                 {s.values.length > 1 && (
                   <path
                     d={smoothLinePath(xs, ys)}
@@ -3178,42 +3259,32 @@ function WeeklyProgressChart({
                   />
                 )}
                 {s.values.map((v, i) =>
-                  i === 0 && !startingPoints ? null : (
+                  i === 0 && fromZero ? null : (
                     <circle key={i} cx={xAt(i)} cy={yAt(v)} r={4} fill={s.color} />
                   )
                 )}
               </g>
             );
           })}
-          {!startingPoints && <circle cx={xAt(0)} cy={yAt(0)} r={3.5} fill="#6b7280" />}
-          <text
-            x={xAt(0)}
-            y={H - 12}
-            textAnchor="middle"
-            fill="#6b7280"
-            fontSize={13}
-            fontFamily="system-ui, sans-serif"
-          >
-            Start
-          </text>
-          {finalGames.map((g, i) => (
+          {fromZero && <circle cx={xAt(0)} cy={yAt(0)} r={3.5} fill="#6b7280" />}
+          {xLabels.map((label, i) => (
             <text
-              key={g.id}
-              x={xAt(i + 1)}
+              key={`${label}-${i}`}
+              x={xAt(i)}
               y={H - 12}
               textAnchor="middle"
-              fill="#374151"
-              fontSize={14}
-              fontWeight={600}
+              fill={i === 0 ? "#6b7280" : "#374151"}
+              fontSize={i === 0 ? 13 : 14}
+              fontWeight={i === 0 ? 400 : 600}
               fontFamily="system-ui, sans-serif"
             >
-              {g.result?.winner || `${g.awayTeam}@${g.homeTeam}`}
+              {label}
             </text>
           ))}
           {endLabels.map(({ s, dotY, y }) => {
             const x = xAt(lastIdx);
             return (
-              <g key={s.player.id}>
+              <g key={s.id}>
                 {Math.abs(y - dotY) > 1 && (
                   <line x1={x + 6} y1={dotY} x2={x + 30} y2={y} stroke={s.color} strokeWidth={1.25} />
                 )}
@@ -3273,8 +3344,9 @@ export function WeekProgressScreen() {
       .finally(() => setLoadingPicks(false));
   }, [leagueId, playerId, currentWeek]);
 
-  const [mode, setMode] = useState<"week" | "season">("week");
+  const [mode, setMode] = useState<"week" | "season" | "weeks">("week");
   const [priorTotals, setPriorTotals] = useState<{ [playerId: string]: number } | null>(null);
+  const [weeklyByWeek, setWeeklyByWeek] = useState<Map<number, Map<string, number>> | null>(null);
 
   React.useEffect(() => {
     if (!leagueId || mode !== "season") return;
@@ -3290,6 +3362,36 @@ export function WeekProgressScreen() {
         setPriorTotals(totals);
       })
       .catch((err) => setLoadError(`Failed to load prior weeks: ${err}`));
+  }, [leagueId, currentWeek, mode]);
+
+  React.useEffect(() => {
+    if (!leagueId || mode !== "weeks") return;
+    let cancelled = false;
+    setWeeklyByWeek(null);
+    const priorWeeks = Array.from({ length: Math.max(0, currentWeek - 1) }, (_, i) => i + 1);
+    if (priorWeeks.length === 0) {
+      setWeeklyByWeek(new Map());
+      return;
+    }
+    Promise.all(priorWeeks.map((w) => firebaseUtils.getWeeklyScores(leagueId, w)))
+      .then((weeks) => {
+        if (cancelled) return;
+        const map = new Map<number, Map<string, number>>();
+        weeks.forEach((scores, i) => {
+          const byPlayer = new Map<string, number>();
+          scores.forEach((s: { playerId: string; pointsAfterMultiplier?: number }) => {
+            byPlayer.set(s.playerId, s.pointsAfterMultiplier || 0);
+          });
+          map.set(priorWeeks[i], byPlayer);
+        });
+        setWeeklyByWeek(map);
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(`Failed to load weekly scores: ${err}`);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [leagueId, currentWeek, mode]);
 
   const activePlayers = players.filter((p) => !p.removedFromLeague);
@@ -3316,17 +3418,53 @@ export function WeekProgressScreen() {
     (a, b) => endPoints(b.id) - endPoints(a.id) || a.name.localeCompare(b.name)
   );
   const hasFinals = games.some((g) => g.result);
+  // Through the selected week, but stop before a week that has no finals yet.
+  const endWeek = hasFinals ? currentWeek : currentWeek - 1;
+  const weekNums = Array.from({ length: Math.max(0, endWeek) }, (_, i) => i + 1);
+  const pointsInWeek = (id: string, week: number) => {
+    if (week === currentWeek) return weekPoints(id);
+    return weeklyByWeek?.get(week)?.get(id) || 0;
+  };
+  const weekSeries = [...activePlayers]
+    .sort((a, b) => {
+      const total = (id: string) => weekNums.reduce((sum, w) => sum + pointsInWeek(id, w), 0);
+      return total(b.id) - total(a.id) || a.name.localeCompare(b.name);
+    })
+    .map((player) => {
+      let cum = 0;
+      const values = [
+        0,
+        ...weekNums.map((w) => {
+          cum += pointsInWeek(player.id, w);
+          return cum;
+        }),
+      ];
+      return progressSeries(player, colorByPlayerId[player.id] || PLAYER_LINE_COLORS[0], values);
+    });
+  const blurb =
+    mode === "weeks"
+      ? endWeek < 1
+        ? "No weeks scored yet."
+        : `Cumulative points after each week, through Week ${endWeek}.`
+      : mode === "week"
+      ? "Running point totals after each final, in pick-sheet order."
+      : currentWeek <= 1
+      ? "Season totals. Week 1 is the first week, so everyone starts at 0."
+      : `Season totals, starting from where everyone stood after Week ${currentWeek - 1}.`;
 
   return (
     <div className="p-4">
       <WeekSelector currentWeek={currentWeek} officialWeek={league?.currentWeek} onChange={setCurrentWeek} />
-      <h2 className="text-2xl font-bold mb-1">Week {currentWeek} Progress</h2>
+      <h2 className="text-2xl font-bold mb-1">
+        {mode === "weeks" ? "Week by Week" : `Week ${currentWeek} Progress`}
+      </h2>
       <div className="flex items-center gap-3 mb-4">
         <div className="inline-flex rounded border overflow-hidden text-sm">
           {(
             [
               ["week", "This week"],
               ["season", "Season standings"],
+              ["weeks", "Week by week"],
             ] as const
           ).map(([value, label]) => (
             <button
@@ -3340,33 +3478,42 @@ export function WeekProgressScreen() {
             </button>
           ))}
         </div>
-        <p className="text-sm text-gray-600">
-          {mode === "week"
-            ? "Running point totals after each final, in pick-sheet order."
-            : currentWeek <= 1
-            ? "Season totals. Week 1 is the first week, so everyone starts at 0."
-            : `Season totals, starting from where everyone stood after Week ${currentWeek - 1}.`}
-        </p>
+        <p className="text-sm text-gray-600">{blurb}</p>
       </div>
-      {loading || loadingPicks || (mode === "season" && !priorTotals && !loadError) ? (
+      {loading ||
+      loadingPicks ||
+      (mode === "season" && !priorTotals && !loadError) ||
+      (mode === "weeks" && !weeklyByWeek && !loadError) ? (
         <div className="text-sm text-gray-600">Loading...</div>
       ) : loadError ? (
         <div className="text-sm text-red-600">{loadError}</div>
-      ) : !hasFinals ? (
+      ) : mode === "weeks" && endWeek < 1 ? (
+        <div className="text-sm text-gray-600">No weeks scored yet.</div>
+      ) : mode !== "weeks" && !hasFinals ? (
         <div className="text-sm text-gray-600">No finals yet this week.</div>
       ) : (
         <div ref={setChartBox} className="border rounded bg-white overflow-hidden">
-          {chartSize.width > 0 && (
-            <WeeklyProgressChart
-              games={games}
-              rankedPlayers={rankedPlayers}
-              pickLookup={pickLookup}
-              colorByPlayerId={colorByPlayerId}
-              width={chartSize.width}
-              height={chartSize.height}
-              startingPoints={startingPoints}
-            />
-          )}
+          {chartSize.width > 0 &&
+            (mode === "weeks" ? (
+              <ProgressLineChart
+                series={weekSeries}
+                xLabels={["Start", ...weekNums.map((w) => `Wk ${w}`)]}
+                fromZero
+                width={chartSize.width}
+                height={chartSize.height}
+                ariaLabel={`Cumulative points after each week, through Week ${endWeek}`}
+              />
+            ) : (
+              <WeeklyProgressChart
+                games={games}
+                rankedPlayers={rankedPlayers}
+                pickLookup={pickLookup}
+                colorByPlayerId={colorByPlayerId}
+                width={chartSize.width}
+                height={chartSize.height}
+                startingPoints={startingPoints}
+              />
+            ))}
         </div>
       )}
     </div>
