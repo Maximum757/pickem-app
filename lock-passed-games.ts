@@ -202,7 +202,8 @@ async function scoreGameAndRefresh(
   season: number,
   winner: string,
   loser: string,
-  multiplier: number
+  multiplier: number,
+  progress: { gameCount: number; gamesFinal: number }
 ) {
   const leagueRef = db.collection("leagues").doc(LEAGUE_ID);
   const picksSnap = await leagueRef.collection("picks").where("gameId", "==", gameId).get();
@@ -238,11 +239,29 @@ async function scoreGameAndRefresh(
   await writePickCounts(gameId, picksSnap.docs);
   // Add this game onto the totals already stored. Re-reading every pick in
   // the season here was most of the daily Firestore quota.
-  await addGameToWeeklyScores(week, deltas);
+  await addGameToWeeklyScores(week, deltas, progress);
   await addGameToStandings(season, deltas);
 }
 
-async function addGameToWeeklyScores(week: number, deltas: GameDelta[]) {
+function weekFinalProgress(
+  gamesSnap: FirebaseFirestore.QuerySnapshot,
+  week: number,
+  finalizedThisRun: Set<string>
+): { gameCount: number; gamesFinal: number } {
+  const weekGames = gamesSnap.docs.filter((d) => d.data().week === week);
+  // The snapshot was taken before this run wrote results, so a game scored
+  // earlier in the same pass still looks unfinished there.
+  const gamesFinal = weekGames.filter(
+    (d) => !!d.data().result || finalizedThisRun.has(d.id)
+  ).length;
+  return { gameCount: weekGames.length, gamesFinal };
+}
+
+async function addGameToWeeklyScores(
+  week: number,
+  deltas: GameDelta[],
+  progress: { gameCount: number; gamesFinal: number }
+) {
   const leagueRef = db.collection("leagues").doc(LEAGUE_ID);
   const ref = leagueRef.collection("weeklyScores").doc(String(week));
   const snap = await ref.get();
@@ -271,6 +290,8 @@ async function addGameToWeeklyScores(week: number, deltas: GameDelta[]) {
     leagueId: LEAGUE_ID,
     week,
     scoredAt: Timestamp.now(),
+    gameCount: progress.gameCount,
+    gamesFinal: progress.gamesFinal,
     scores,
   });
 }
@@ -411,6 +432,7 @@ async function lockPassedGames() {
   let finalsEntered = 0;
   let scoresFilled = 0;
   let tiesEntered = 0;
+  const finalizedThisRun = new Set<string>();
   for (const doc of gamesSnap.docs) {
     const g = doc.data();
     if (g.week === 0) continue;
@@ -478,7 +500,16 @@ async function lockPassedGames() {
       live: FieldValue.delete(),
     });
     extraLockedIds.add(doc.id);
-    await scoreGameAndRefresh(doc.id, g.week, season, espnWinner, espnLoser, g.playoffMultiplier || 1);
+    finalizedThisRun.add(doc.id);
+    await scoreGameAndRefresh(
+      doc.id,
+      g.week,
+      season,
+      espnWinner,
+      espnLoser,
+      g.playoffMultiplier || 1,
+      weekFinalProgress(gamesSnap, g.week, finalizedThisRun)
+    );
     finalsEntered++;
   }
 

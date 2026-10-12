@@ -1493,10 +1493,19 @@ type StandingsSort =
   | { column: "total"; dir: "desc" | "asc" }
   | { column: "week"; week: number; dir: "desc" | "asc" };
 
+type WeekScoreCache = {
+  week: number;
+  gameCount: number | null;
+  gamesFinal: number | null;
+  scores: { playerId: string; gamesCorrect: number; pointsAfterMultiplier: number }[];
+};
+
 export function StandingsScreen() {
   const { leagueId, playerId, standings, league, loading } = useLeague();
-  const [allGames, setAllGames] = useState<schema.GameDoc[]>([]);
-  const [allPicks, setAllPicks] = useState<schema.PickDoc[]>([]);
+  // One saved sheet per week, not every pick. Opening this page used to
+  // read the whole season of games and picks, which is what used up the
+  // daily Firestore allowance on Sundays.
+  const [weekScores, setWeekScores] = useState<WeekScoreCache[]>([]);
   const [tiebreakersByWeek, setTiebreakersByWeek] = useState<
     Map<number, schema.WeeklyTiebreakerDoc>
   >(new Map());
@@ -1509,31 +1518,33 @@ export function StandingsScreen() {
   const [sort, setSort] = useState<StandingsSort>({ column: "season" });
 
   React.useEffect(() => {
-    if (!leagueId || !playerId) return;
+    if (!leagueId || !playerId || !league) return;
     setLoadingGrid(true);
     setLoadError(null);
+    const through = Math.min(18, Math.max(1, league.currentWeek || 1));
+    const weeksToLoad = Array.from({ length: through }, (_, i) => i + 1);
     (async () => {
       try {
-        const gamesData = await firebaseUtils.getAllGamesForLeague(leagueId);
-        setAllGames(gamesData);
-
-        // Two explicitly-filtered queries per week (own picks + visible
-        // picks), not one broad query — real testing showed Firestore only
-        // reliably allows a list query when its own WHERE filter matches,
-        // field for field, what the security rule checks. See
-        // getVisiblePicksForWeek in firebase-utils.ts for the full story;
-        // this replaced an earlier version that (still incorrectly)
-        // assumed a broad query plus a "simple" rule condition would work.
-        const weeksInLeague = Array.from(new Set(gamesData.map((g) => g.week))).sort((a, b) => a - b);
-        const [picksByWeek, tiebreakerDocs] = await Promise.all([
-          Promise.all(weeksInLeague.map((w) => firebaseUtils.getVisiblePicksForWeek(leagueId, w, playerId))),
-          // weeklyTiebreakers is openly readable — no special query pattern
-          // needed here, unlike picks.
-          Promise.all(weeksInLeague.map((w) => firebaseUtils.getWeeklyTiebreaker(leagueId, w))),
+        const [scoreDocs, tiebreakerDocs] = await Promise.all([
+          Promise.all(weeksToLoad.map((w) => firebaseUtils.getWeeklyScoreDoc(leagueId, w))),
+          Promise.all(weeksToLoad.map((w) => firebaseUtils.getWeeklyTiebreaker(leagueId, w))),
         ]);
-        setAllPicks(picksByWeek.flat());
+        setWeekScores(
+          weeksToLoad.flatMap((w, i) => {
+            const doc = scoreDocs[i];
+            if (!doc) return [];
+            return [
+              {
+                week: w,
+                gameCount: doc.gameCount ?? null,
+                gamesFinal: doc.gamesFinal ?? null,
+                scores: doc.scores,
+              },
+            ];
+          })
+        );
         const tbMap = new Map<number, schema.WeeklyTiebreakerDoc>();
-        weeksInLeague.forEach((w, i) => {
+        weeksToLoad.forEach((w, i) => {
           const tb = tiebreakerDocs[i];
           if (tb) tbMap.set(w, tb);
         });
@@ -1544,38 +1555,34 @@ export function StandingsScreen() {
         setLoadingGrid(false);
       }
     })();
-  }, [leagueId, playerId]);
+  }, [leagueId, playerId, league?.currentWeek]);
 
   if (loading || loadingGrid) return <div className="p-4">Loading...</div>;
   if (loadError) return <div className="p-4 text-red-600 text-sm">{loadError}</div>;
 
-  // Week 0 was the test slate — excluded from the real standings grid, same
-  // as it's excluded from the real season point totals (see
-  // recalculateSeasonStandings in firebase-utils.ts). Data stays in
-  // Firestore either way, just not shown here anymore.
-  const weeks = Array.from(new Set(allGames.map((g) => g.week)))
-    .filter((w) => w > 0)
-    .sort((a, b) => a - b);
+  // Always the 18-week regular season. Future weeks stay blank until a
+  // score sheet exists, which is the same "—" the pick-by-pick grid showed.
+  const weeks = Array.from({ length: 18 }, (_, i) => i + 1);
 
-  // Points AND correct-picks-count per player per week, from whatever picks
-  // are actually visible to this viewer (their own always; others' only
-  // once revealed — see the picks read rule). A week that's fully hidden
-  // from a regular player just shows blank for everyone but themselves and
-  // the commissioner, same reveal timing as everywhere else in the app.
   const pointsByPlayerWeek = new Map<string, Map<number, number>>();
   const correctByPlayerWeek = new Map<string, Map<number, number>>();
-  allPicks.forEach((p) => {
-    if (p.pointsAwarded === undefined) return;
-    if (!pointsByPlayerWeek.has(p.playerId)) pointsByPlayerWeek.set(p.playerId, new Map());
-    const weekMap = pointsByPlayerWeek.get(p.playerId)!;
-    weekMap.set(p.week, (weekMap.get(p.week) || 0) + p.pointsAwarded);
-
-    if (p.isCorrect) {
-      if (!correctByPlayerWeek.has(p.playerId)) correctByPlayerWeek.set(p.playerId, new Map());
-      const correctMap = correctByPlayerWeek.get(p.playerId)!;
-      correctMap.set(p.week, (correctMap.get(p.week) || 0) + 1);
-    }
+  weekScores.forEach((sheet) => {
+    sheet.scores.forEach((row) => {
+      if (!pointsByPlayerWeek.has(row.playerId)) pointsByPlayerWeek.set(row.playerId, new Map());
+      pointsByPlayerWeek.get(row.playerId)!.set(sheet.week, row.pointsAfterMultiplier || 0);
+      if (!correctByPlayerWeek.has(row.playerId)) correctByPlayerWeek.set(row.playerId, new Map());
+      correctByPlayerWeek.get(row.playerId)!.set(sheet.week, row.gamesCorrect || 0);
+    });
   });
+
+  // A week pays out once every game is final. Sheets written before we
+  // stored that count are finished once the league has moved past them.
+  const weekIsComplete = (w: number) => {
+    const sheet = weekScores.find((s) => s.week === w);
+    if (!sheet) return false;
+    if (sheet.gameCount && sheet.gameCount > 0 && sheet.gamesFinal === sheet.gameCount) return true;
+    return sheet.gameCount == null && !!league && w < league.currentWeek;
+  };
 
   // Weekly winnings: whoever had the most points that week wins the
   // payout. A genuine points TIE gets broken by that week's tiebreaker —
@@ -1586,9 +1593,7 @@ export function StandingsScreen() {
   const weeklyWinningsByPlayer = new Map<string, number>();
   if (league?.regularSeasonWeeklyPayout) {
     weeks.forEach((w) => {
-      const weekGames = allGames.filter((g) => g.week === w);
-      const weekComplete = weekGames.length > 0 && weekGames.every((g) => !!g.result);
-      if (!weekComplete) return;
+      if (!weekIsComplete(w)) return;
 
       let maxPts = 0;
       let leaders: string[] = [];
@@ -1631,8 +1636,7 @@ export function StandingsScreen() {
   // this much" while the season's still in progress implies a result that
   // hasn't actually happened yet. Standings/rank stay live throughout;
   // it's specifically the $ payout that waits.
-  const finalWeekGames = allGames.filter((g) => g.week === 18);
-  const seasonComplete = finalWeekGames.length > 0 && finalWeekGames.every((g) => !!g.result);
+  const seasonComplete = weekIsComplete(18);
 
   const seasonWinningsByPlayer = new Map<string, number>();
   if (seasonComplete && league?.regularSeasonPayouts) {
@@ -1718,11 +1722,11 @@ export function StandingsScreen() {
         </p>
       )}
 
-      <div className="overflow-x-auto">
-        <table className="border-collapse text-sm">
+      <div className="overflow-x-auto max-w-full">
+        <table className="border-collapse text-sm w-max">
           <thead>
             <tr className="border-b-2">
-              <th className="text-left py-2 pr-3 sticky left-0 bg-white">
+              <th className="text-left py-2 pr-2 sticky left-0 z-10 bg-white w-16">
                 <button
                   type="button"
                   onClick={() => clickSort({ column: "season" })}
@@ -1733,7 +1737,7 @@ export function StandingsScreen() {
                   Rank{sort.column === "season" ? " ▼" : ""}
                 </button>
               </th>
-              <th className="text-left py-2 pr-4 sticky left-8 bg-white">Player</th>
+              <th className="text-left py-2 pr-3 sticky left-16 z-10 bg-white w-36 md:w-auto">Player</th>
               <th className="text-center py-2 px-3 font-bold border-l-2 border-r-2">
                 <button
                   type="button"
@@ -1774,10 +1778,10 @@ export function StandingsScreen() {
               return (
                 <React.Fragment key={s.playerId}>
                   <tr className="bg-green-50">
-                    <td className="py-2 pr-3 font-bold text-lg sticky left-0 bg-green-50">
+                    <td className="py-2 pr-2 font-bold text-lg sticky left-0 z-10 bg-green-50 w-16">
                       {s.rank}
                     </td>
-                    <td className="pt-2 pr-4 font-bold text-base sticky left-8 bg-green-50">
+                    <td className="pt-2 pr-3 font-bold text-base sticky left-16 z-10 bg-green-50 w-36 md:w-auto">
                       {s.playerName}
                     </td>
                     <td className="text-center pt-2 px-3 font-bold text-lg border-l-2 border-r-2">
@@ -1799,8 +1803,8 @@ export function StandingsScreen() {
                     })}
                   </tr>
                   <tr className="border-b-2 border-gray-200">
-                    <td className="pb-2 pr-3 sticky left-0 bg-white"></td>
-                    <td className="pb-2 pr-4 text-xs text-gray-500 sticky left-8 bg-white">
+                    <td className="pb-2 pr-2 sticky left-0 z-10 bg-white w-16"></td>
+                    <td className="pb-2 pr-3 text-xs text-gray-500 sticky left-16 z-10 bg-white">
                       {winnings > 0 ? `$${winnings.toLocaleString()} won` : ""}
                     </td>
                     <td className="text-center whitespace-nowrap pb-2 px-3 text-xs text-gray-500 border-l-2 border-r-2">
@@ -4451,7 +4455,7 @@ export function App() {
               </button>
             </div>
           </div>
-          <div className="flex gap-4 text-sm">
+          <div className="flex gap-4 text-sm overflow-x-auto xl:overflow-visible">
             <button
               onClick={() => setView("picks")}
               className={`py-2 px-4 rounded font-medium transition ${

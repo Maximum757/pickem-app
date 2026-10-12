@@ -171,11 +171,19 @@ export async function getWeeklyScores(
   leagueId: string,
   week: number
 ): Promise<any[]> {
+  const data = await getWeeklyScoreDoc(leagueId, week);
+  return data?.scores ?? [];
+}
+
+/** The saved week sheet itself, not just the rows. One read. */
+export async function getWeeklyScoreDoc(
+  leagueId: string,
+  week: number
+): Promise<schema.WeeklyScoresDoc | null> {
   const docRef = doc(db, `leagues/${leagueId}/weeklyScores/${week}`);
   const docSnap = await getDoc(docRef);
-  if (!docSnap.exists()) return [];
-  const data = docSnap.data() as schema.WeeklyScoresDoc;
-  return data.scores;
+  if (!docSnap.exists()) return null;
+  return docSnap.data() as schema.WeeklyScoresDoc;
 }
 
 /**
@@ -532,9 +540,10 @@ export async function getVisiblePicksForWeek(
  * public aggregate, the same way the season standings doc works.
  */
 export async function recalculateWeeklyScores(leagueId: string, week: number): Promise<void> {
-  const [players, weekPicks] = await Promise.all([
+  const [players, weekPicks, games] = await Promise.all([
     getPlayers(leagueId),
     getAllPicksForWeek(leagueId, week),
+    getGamesForWeek(leagueId, week),
   ]);
 
   const scores = players.map((player) => {
@@ -557,6 +566,8 @@ export async function recalculateWeeklyScores(leagueId: string, week: number): P
     leagueId,
     week,
     scoredAt: Timestamp.now(),
+    gameCount: games.length,
+    gamesFinal: games.filter((g) => !!g.result).length,
     scores,
   } as schema.WeeklyScoresDoc);
 }
@@ -745,6 +756,8 @@ export async function scoreWeek(
     leagueId,
     week,
     scoredAt: Timestamp.now(),
+    gameCount: games.length,
+    gamesFinal: games.filter((g) => !!g.result).length,
     scores: scoresWithNames,
   } as schema.WeeklyScoresDoc);
 

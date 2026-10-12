@@ -323,6 +323,12 @@ export interface WeeklyScoresDoc {
   leagueId: string;
   week: number;
   scoredAt: Timestamp;
+  // How many games this week has, and how many are final. Standings uses
+  // this to know a week is over without reading every game doc. Missing on
+  // sheets written before this existed; those weeks are treated as finished
+  // once the league has moved on.
+  gameCount?: number;
+  gamesFinal?: number;
   scores: {
     playerId: string;
     playerName: string;
