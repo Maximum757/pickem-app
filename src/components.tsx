@@ -1591,6 +1591,9 @@ export function StandingsScreen() {
   // among players who are BOTH tied on points AND (if they guessed)
   // matched by the tiebreaker's own resolution.
   const weeklyWinningsByPlayer = new Map<string, number>();
+  // Weeks where a points tie was broken. Both leaders stay highlighted;
+  // the asterisk marks who the tiebreaker paid.
+  const tiebreakWinWeeks = new Set<string>();
   if (league?.regularSeasonWeeklyPayout) {
     weeks.forEach((w) => {
       if (!weekIsComplete(w)) return;
@@ -1618,7 +1621,10 @@ export function StandingsScreen() {
           // resolvedWinnerIds could in principle include someone outside
           // this particular points-tie if the tiebreaker doc's stale.
           const stillTied = resolved.filter((id) => leaders.includes(id));
-          if (stillTied.length > 0) payoutTo = stillTied;
+          if (stillTied.length > 0) {
+            payoutTo = stillTied;
+            stillTied.forEach((id) => tiebreakWinWeeks.add(`${id}:${w}`));
+          }
         }
         // No recorded/resolved tiebreaker for this week — fall back to
         // splitting evenly among the points-tied leaders, same as before.
@@ -1716,10 +1722,13 @@ export function StandingsScreen() {
         Tap Total or a week to sort. Rank is always season place.
       </p>
       {league?.regularSeasonPayouts && !seasonComplete && (
-        <p className="text-xs text-gray-500 mb-4">
+        <p className="text-xs text-gray-500 mb-2">
           Season-long payouts aren't awarded until Week 18 finishes — weekly winnings still show as
           each week wraps up.
         </p>
+      )}
+      {tiebreakWinWeeks.size > 0 && (
+        <p className="text-xs text-gray-500 mb-4">* won on tiebreaker</p>
       )}
 
       <div className="overflow-x-auto max-w-full">
@@ -1790,14 +1799,16 @@ export function StandingsScreen() {
                     {weeks.map((w) => {
                       const pts = weekMap?.get(w);
                       const isWeeklyHigh = pts !== undefined && pts > 0 && pts === maxPointsByWeek.get(w);
+                      const wonOnTiebreaker = tiebreakWinWeeks.has(`${s.playerId}:${w}`);
                       return (
                         <td
                           key={w}
-                          className={`text-center pt-2 px-2 font-semibold ${
+                          className={`text-center pt-2 px-2 font-semibold whitespace-nowrap ${
                             isWeeklyHigh ? "bg-yellow-100 text-yellow-800 rounded" : ""
                           }`}
                         >
                           {pts !== undefined ? pts : "—"}
+                          {wonOnTiebreaker && <span title="Won on tiebreaker">*</span>}
                         </td>
                       );
                     })}
@@ -2569,16 +2580,11 @@ export function CommissionerDashboard() {
             // having passed, only an explicit lock/result action.
             const gameIsPastKickoff = isPastLock(game, games, now);
             const gameDetails = pickDetailsByGame[game.id] || {};
-            const wildcardAssignedIds = Object.keys(gameDetails).filter(
-              (pid) => gameDetails[pid].isWildcard
-            );
-            // Anyone the panel should let the commissioner set/change a pick
-            // for: still missing entirely, or already has a wildcard-
-            // assigned pick that might need correcting. A player's own
-            // deliberate pick isn't editable here — only ones the
-            // commissioner made on someone's behalf.
-            const editablePlayerIds = Array.from(new Set([...missing, ...wildcardAssignedIds]));
-            const canFillIn = (game.isLocked || gameIsPastKickoff) && editablePlayerIds.length > 0;
+            // After kickoff the player can no longer change their own pick,
+            // so this is the place to fill a blank or switch one they saved.
+            const canEditPicks = game.isLocked || gameIsPastKickoff;
+            const editablePlayerIds = canEditPicks ? allPlayerIds : [];
+            const canFillIn = canEditPicks && editablePlayerIds.length > 0;
             return (
               <div key={game.id} className="border rounded bg-white px-3 py-2 mb-1">
                 <div className="flex items-center justify-between">
@@ -2615,7 +2621,7 @@ export function CommissionerDashboard() {
                         onClick={() => setFillingGameId(isExpanded ? null : game.id)}
                         className="text-xs font-semibold text-purple-600"
                       >
-                        {isExpanded ? "Close" : "Fill in"}
+                        {isExpanded ? "Close" : missing.length > 0 ? "Fill in" : "Change picks"}
                       </button>
                     )}
                   </div>
@@ -2624,7 +2630,7 @@ export function CommissionerDashboard() {
                 {isExpanded && canFillIn && (
                   <div className="mt-2 pt-2 border-t space-y-2">
                     <p className="text-xs text-gray-500">
-                      Assign or fix a pick on their behalf — marked as a wildcard/assigned pick.
+                      A blank is marked as an assigned pick. Changing a pick someone already made stays theirs.
                     </p>
                     {assignError && (
                       <p className="text-xs text-red-600 font-semibold">{assignError}</p>
@@ -2698,6 +2704,21 @@ export function CommissionerDashboard() {
 // locks, same moment those last-game picks become public.
 // ============================================================================
 
+// Columns run highest score to lowest. The person looking is always the
+// leftmost column, even when they aren't leading.
+function compareWeeklyColumns(
+  a: { id: string; name: string },
+  b: { id: string; name: string },
+  pointsOf: (id: string) => number,
+  viewerId: string | null
+) {
+  if (viewerId && a.id === viewerId && b.id !== viewerId) return -1;
+  if (viewerId && b.id === viewerId && a.id !== viewerId) return 1;
+  const diff = pointsOf(b.id) - pointsOf(a.id);
+  if (diff !== 0) return diff;
+  return a.name.localeCompare(b.name);
+}
+
 export function EveryonesPicksScreen() {
   const {
     leagueId,
@@ -2769,28 +2790,18 @@ export function EveryonesPicksScreen() {
   const showTiebreakerRow =
     !!lastGame && (lastGame.isLocked || lastGame.isManuallyLocked || lastGamePastKickoff);
 
-  // Viewer's own column first, then the commissioner's (skipped if that's
-  // the same person — a commissioner viewing their own summary just gets
-  // their one column up front, no duplicate), then everyone else
-  // alphabetical.
-  const commissionerId = league?.commissionerId;
-  const sortedPlayers = [...players]
-    .filter((p) => !p.removedFromLeague)
-    .sort((a, b) => {
-      const rank = (p: typeof a) => (p.id === playerId ? 0 : p.id === commissionerId ? 1 : 2);
-      const rankDiff = rank(a) - rank(b);
-      if (rankDiff !== 0) return rankDiff;
-      return a.name.localeCompare(b.name);
-    });
-
+  const activePlayers = players.filter((p) => !p.removedFromLeague);
   const pointsByPlayer = new Map<string, number>();
-  sortedPlayers.forEach((p) => {
+  activePlayers.forEach((p) => {
     const total = sortedGames.reduce((sum, g) => {
       const pick = pickByPlayerGame.get(`${p.id}_${g.id}`);
       return sum + (pick?.isCorrect ? pick.pointsAwarded || 0 : 0);
     }, 0);
     pointsByPlayer.set(p.id, total);
   });
+  const sortedPlayers = [...activePlayers].sort((a, b) =>
+    compareWeeklyColumns(a, b, (id) => pointsByPlayer.get(id) || 0, playerId)
+  );
   const maxPoints = Math.max(0, ...Array.from(pointsByPlayer.values()));
   const weeklyLeaders = sortedPlayers
     .filter((p) => maxPoints > 0 && pointsByPlayer.get(p.id) === maxPoints)
@@ -3620,6 +3631,10 @@ export function WeeklySummary() {
       b.correct - a.correct ||
       a.player.name.localeCompare(b.player.name)
   );
+  const pointsByRecapPlayer = new Map(weeklyResults.map((r) => [r.player.id, r.points]));
+  const recapColumns = [...recapPlayers].sort((a, b) =>
+    compareWeeklyColumns(a, b, (id) => pointsByRecapPlayer.get(id) || 0, playerId)
+  );
 
   const tiedAtTop =
     weeklyResults.length >= 2 &&
@@ -3663,7 +3678,7 @@ export function WeeklySummary() {
               <thead>
                 <tr>
                   <th className="p-1 bg-gray-100 sticky left-0 text-left w-20">Game</th>
-                  {recapPlayers.map((p) => (
+                  {recapColumns.map((p) => (
                     <th
                       key={p.id}
                       className="px-0 py-1 bg-gray-100 text-center whitespace-nowrap overflow-hidden"
@@ -3680,7 +3695,7 @@ export function WeeklySummary() {
                     <td className="p-1 font-semibold whitespace-nowrap sticky left-0 bg-white">
                       {g.awayTeam}@{g.homeTeam}
                     </td>
-                    {recapPlayers.map((p) => {
+                    {recapColumns.map((p) => {
                       const pick = pickLookup[p.id]?.[g.id];
                       if (!pick) {
                         return (

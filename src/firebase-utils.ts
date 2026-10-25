@@ -1358,13 +1358,10 @@ export async function restorePlayerToLeague(leagueId: string, playerId: string):
 }
 
 /**
- * Commissioner fills in a pick on behalf of a player who missed one before
- * their game locked. Marked isWildcard so it's visibly distinguishable from
- * a pick the player actually made themselves. If the game already has a
- * result (this pick was assigned after the fact, not just before results
- * came in), re-runs scoring for that game so the newly-added pick actually
- * gets counted — otherwise it would sit unscored forever, since
- * scoreGameImmediately only ever ran once, before this pick existed.
+ * Commissioner sets a pick after kickoff. A blank, or a pick already
+ * assigned this way, is marked isWildcard. Changing a pick the player
+ * made themselves only swaps the team — it stays their pick. If the game
+ * already has a result, scoring runs again so the new team counts.
  */
 export async function assignMissedPick(
   leagueId: string,
@@ -1375,24 +1372,32 @@ export async function assignMissedPick(
 ): Promise<void> {
   const pickId = schema.getPickId(playerId, gameId);
   const pickRef = doc(db, `leagues/${leagueId}/picks`, pickId);
-  await setDoc(pickRef, {
-    id: pickId,
-    leagueId,
-    playerId,
-    gameId,
-    week,
-    pickedTeam,
-    isWildcard: true,
-    submittedAt: Timestamp.now(),
-    // assignMissedPick only ever runs once a game's already locked (that's
-    // what unlocks the "Fill in" UI in the first place), so this pick
-    // should be visible right away, not wait for some future lock event
-    // that's already happened.
-    visibleToAll: true,
-  } as schema.PickDoc);
+  const existingSnap = await getDoc(pickRef);
+  const existing = existingSnap.exists() ? (existingSnap.data() as schema.PickDoc) : null;
 
-  const gameRef = doc(db, `leagues/${leagueId}/games`, gameId);
-  const gameSnap = await getDoc(gameRef);
+  if (existing && !existing.isWildcard) {
+    await updateDoc(pickRef, {
+      pickedTeam,
+      submittedAt: Timestamp.now(),
+    });
+  } else {
+    await setDoc(pickRef, {
+      id: pickId,
+      leagueId,
+      playerId,
+      gameId,
+      week,
+      pickedTeam,
+      isWildcard: true,
+      submittedAt: Timestamp.now(),
+      // This only runs once a game is locked, so the pick is public now.
+      visibleToAll: true,
+    } as schema.PickDoc);
+  }
+
+  await recomputeGamePickCounts(leagueId, gameId);
+
+  const gameSnap = await getDoc(doc(db, `leagues/${leagueId}/games`, gameId));
   const game = gameSnap.data() as schema.GameDoc | undefined;
   if (game?.result) {
     await scoreGameImmediately(
