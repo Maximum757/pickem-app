@@ -519,6 +519,26 @@ export async function getVisiblePicksForWeek(
 }
 
 /**
+ * Read specific picks by id. A list query only returns picks already marked
+ * visibleToAll. A direct read is allowed once that game's lock time has
+ * passed, which is how Monday's picks show up when Sunday night kicks off
+ * even if the lock job has not flipped the flag yet.
+ */
+export async function getPicksByIds(leagueId: string, pickIds: string[]): Promise<schema.PickDoc[]> {
+  const snaps = await Promise.all(
+    pickIds.map(async (id) => {
+      try {
+        const snap = await getDoc(doc(db, `leagues/${leagueId}/picks`, id));
+        return snap.exists() ? (snap.data() as schema.PickDoc) : null;
+      } catch {
+        return null;
+      }
+    })
+  );
+  return snaps.filter((p): p is schema.PickDoc => p !== null);
+}
+
+/**
  * Enter game result and trigger week scoring
  */
 /**

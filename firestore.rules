@@ -40,6 +40,18 @@ service cloud.firestore {
         (get(path).data.get('locksAt', null) == null || request.time < get(path).data.get('locksAt', null));
     }
 
+    // Inverse of gameIsOpen, for revealing one pick by id. Same clocks:
+    // a Monday game is public once locksAt (Sunday night) has passed,
+    // even if isLocked is still false.
+    function gamePicksArePublic(leagueId, gameId) {
+      let path = /databases/$(database)/documents/leagues/$(leagueId)/games/$(gameId);
+      return exists(path) && (
+        get(path).data.isLocked == true ||
+        (get(path).data.gameTime != null && request.time >= get(path).data.gameTime) ||
+        (get(path).data.get('locksAt', null) != null && request.time >= get(path).data.get('locksAt', null))
+      );
+    }
+
     // A tiebreaker is open for guesses if no question has been set yet for
     // that week (nothing to lock), or it exists and hasn't been explicitly
     // locked by the commissioner (see lockTiebreaker() in firebase-utils.ts).
@@ -158,6 +170,12 @@ service cloud.firestore {
         // branch above, which doesn't depend on resource.data and so has no
         // such requirement.
         allow read: if isSignedIn() && resource.data.visibleToAll == true;
+
+        // A single-document read, not a list. Monday night closes at Sunday
+        // night via locksAt, which can be earlier than the isLocked flag the
+        // lock job writes. List queries stay on visibleToAll. This is how
+        // What If reads Monday's picks at the moment Sunday night kicks off.
+        allow get: if isSignedIn() && gamePicksArePublic(leagueId, resource.data.gameId);
 
         // A player can only create their own pick, and only while the game
         // it's for is still open (not locked). This is server-side — it's

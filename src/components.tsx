@@ -1262,6 +1262,18 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
   const [chosen, setChosen] = useState<{ [gameId: string]: string }>({});
   const [followedId, setFollowedId] = useState<string | null>(null);
 
+  // Changes once, when a game's lock time passes, not on every live score tick.
+  const earlyLockKey = games
+    .filter((g) => !g.isLocked && !g.isManuallyLocked && isPastLock(g, games, now))
+    .map((g) => g.id)
+    .sort()
+    .join(",");
+  const rosterKey = players
+    .filter((p) => !p.removedFromLeague)
+    .map((p) => p.id)
+    .sort()
+    .join(",");
+
   React.useEffect(() => {
     if (!leagueId || !playerId) return;
     setLoadingPicks(true);
@@ -1269,16 +1281,33 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
     setChosen({});
     setFollowedId(null);
     setGuessByPlayer({});
-    const picksPromise = includeUnlocked
-      ? firebaseUtils.getAllPicksForWeek(leagueId, currentWeek)
-      : firebaseUtils.getVisiblePicksForWeek(leagueId, currentWeek, playerId);
+    const picksPromise =
+      includeUnlocked || isCommissioner
+        ? firebaseUtils.getAllPicksForWeek(leagueId, currentWeek)
+        : firebaseUtils.getVisiblePicksForWeek(leagueId, currentWeek, playerId);
     const guessesPromise =
       includeUnlocked || isCommissioner
         ? firebaseUtils.getAllTiebreakerGuessesForWeek(leagueId, currentWeek)
         : firebaseUtils.getVisibleTiebreakerGuessesForWeek(leagueId, currentWeek, playerId);
     Promise.all([picksPromise, guessesPromise])
-      .then(([picksData, guesses]) => {
-        setPicks(picksData);
+      .then(async ([picksData, guesses]) => {
+        let merged = picksData;
+        // Monday night locks when Sunday night kicks off, before the lock
+        // job has necessarily marked those picks public. Read them by id.
+        if (!includeUnlocked && !isCommissioner) {
+          const roster = players.filter((p) => !p.removedFromLeague);
+          const closedEarly = games.filter(
+            (g) => !g.isLocked && !g.isManuallyLocked && isPastLock(g, games, new Date())
+          );
+          const ids = closedEarly.flatMap((g) => roster.map((p) => `${p.id}_${g.id}`));
+          if (ids.length > 0) {
+            const extra = await firebaseUtils.getPicksByIds(leagueId, ids);
+            const byId = new Map(picksData.map((p) => [p.id, p]));
+            extra.forEach((p) => byId.set(p.id, p));
+            merged = Array.from(byId.values());
+          }
+        }
+        setPicks(merged);
         const byPlayer: Record<string, number> = {};
         guesses.forEach((g) => {
           byPlayer[g.playerId] = g.guess;
@@ -1287,7 +1316,7 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
       })
       .catch((err) => setLoadError(`Failed to load picks: ${err}`))
       .finally(() => setLoadingPicks(false));
-  }, [leagueId, playerId, currentWeek, includeUnlocked, isCommissioner]);
+  }, [leagueId, playerId, currentWeek, includeUnlocked, isCommissioner, earlyLockKey, rosterKey]);
 
   const pendingGames = games
     .filter((g) => {
