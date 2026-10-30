@@ -2072,6 +2072,19 @@ export function CommissionerDashboard() {
   const [tiebreakerGuessValues, setTiebreakerGuessValues] = useState<{ [playerId: string]: number }>({});
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [fillingGameId, setFillingGameId] = useState<string | null>(null);
+  // Separate from the fill-in list on purpose. The people who already
+  // picked are not on that list, so filling a blank can't overwrite them.
+  const [changingGameId, setChangingGameId] = useState<string | null>(null);
+  const [confirmChange, setConfirmChange] = useState<{
+    gameId: string;
+    playerId: string;
+    from: string;
+    to: string;
+  } | null>(null);
+  // Stays on the game after the click, so a bad change is still visible.
+  const [changeLog, setChangeLog] = useState<
+    { key: string; gameId: string; playerId: string; name: string; from: string | null; to: string }[]
+  >([]);
   // Per-row UI state for the fill-in panel, keyed by `${gameId}_${playerId}`
   // — gives real feedback on click instead of the button silently doing
   // nothing until a page reload happened to show the result.
@@ -2112,13 +2125,33 @@ export function CommissionerDashboard() {
   // refreshed data actually confirms it landed, and a visible error right
   // in this panel if it didn't — rather than the button appearing to do
   // nothing either way, which was the actual bug being fixed here.
-  const handleAssignAndRefresh = async (gameId: string, forPlayerId: string, pickedTeam: string) => {
+  const handleAssignAndRefresh = async (
+    gameId: string,
+    forPlayerId: string,
+    pickedTeam: string,
+    previous: string | null
+  ) => {
     const key = `${gameId}_${forPlayerId}`;
     setSavingKey(key);
     setAssignError(null);
     try {
       await assignMissedPick(gameId, forPlayerId, pickedTeam);
       await refreshPickedByGame();
+      const name = players.find((p) => p.id === forPlayerId)?.name || forPlayerId;
+      setChangeLog((prev) =>
+        [
+          {
+            key: `${key}_${Date.now()}`,
+            gameId,
+            playerId: forPlayerId,
+            name,
+            from: previous,
+            to: pickedTeam,
+          },
+          ...prev,
+        ].slice(0, 20)
+      );
+      setConfirmChange(null);
       setSavedKey(key);
       setTimeout(() => setSavedKey((k) => (k === key ? null : k)), 2000);
     } catch (err) {
@@ -2601,7 +2634,8 @@ export function CommissionerDashboard() {
             const missing = allPlayerIds.filter((id) => !picked.has(id));
             const isComplete = missing.length === 0;
             const key = `game-${game.id}`;
-            const isExpanded = fillingGameId === game.id;
+            const isFilling = fillingGameId === game.id;
+            const isChanging = changingGameId === game.id;
             // Only makes sense to fill in a missed pick once the game's
             // actually locked — before that, the player can still just pick
             // it themselves. Same real-time check as the results-entry
@@ -2612,11 +2646,13 @@ export function CommissionerDashboard() {
             // After kickoff the player can no longer change their own pick,
             // so this is the place to fill a blank or switch one they saved.
             const canEditPicks = game.isLocked || gameIsPastKickoff;
-            const editablePlayerIds = canEditPicks ? allPlayerIds : [];
-            const canFillIn = canEditPicks && editablePlayerIds.length > 0;
+            const existingIds = allPlayerIds.filter((id) => picked.has(id));
+            const gameLog = changeLog.filter((entry) => entry.gameId === game.id);
+            const awayColors = getTeamColor(game.awayTeam);
+            const homeColors = getTeamColor(game.homeTeam);
             return (
               <div key={game.id} className="border rounded bg-white px-3 py-2 mb-1">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <div>
                     <div className="text-xs text-gray-500">
                       {game.timeTBD || !game.gameTime
@@ -2627,7 +2663,7 @@ export function CommissionerDashboard() {
                       {game.awayTeam} @ {game.homeTeam}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap justify-end">
                     <span
                       className={`text-xs font-bold px-2 py-1 rounded-full ${
                         isComplete ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
@@ -2645,30 +2681,68 @@ export function CommissionerDashboard() {
                         {copiedKey === key ? "Copied!" : "Copy contacts"}
                       </button>
                     )}
-                    {canFillIn && (
+                    {canEditPicks && missing.length > 0 && (
                       <button
-                        onClick={() => setFillingGameId(isExpanded ? null : game.id)}
+                        onClick={() => {
+                          setConfirmChange(null);
+                          setChangingGameId(null);
+                          setFillingGameId(isFilling ? null : game.id);
+                        }}
                         className="text-xs font-semibold text-purple-600"
                       >
-                        {isExpanded ? "Close" : missing.length > 0 ? "Fill in" : "Change picks"}
+                        {isFilling ? "Close" : "Fill in"}
+                      </button>
+                    )}
+                    {canEditPicks && existingIds.length > 0 && (
+                      <button
+                        onClick={() => {
+                          setConfirmChange(null);
+                          setFillingGameId(null);
+                          setChangingGameId(isChanging ? null : game.id);
+                        }}
+                        className="text-xs font-semibold text-amber-800"
+                      >
+                        {isChanging ? "Close" : "Change picks"}
                       </button>
                     )}
                   </div>
                 </div>
 
-                {isExpanded && canFillIn && (
+                {gameLog.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {gameLog.map((entry) => (
+                      <li key={entry.key} className="text-xs text-gray-700 flex items-center gap-2">
+                        <span>
+                          {entry.from
+                            ? `Changed ${entry.name} from ${entry.from} to ${entry.to}`
+                            : `Assigned ${entry.name} to ${entry.to}`}
+                        </span>
+                        {entry.from && (
+                          <button
+                            onClick={() => handleAssignAndRefresh(game.id, entry.playerId, entry.from as string, entry.to)}
+                            className="font-semibold text-amber-800 underline"
+                          >
+                            Undo
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {isFilling && canEditPicks && (
                   <div className="mt-2 pt-2 border-t space-y-2">
                     <p className="text-xs text-gray-500">
-                      A blank is marked as an assigned pick. Changing a pick someone already made stays theirs.
+                      Only people with no pick. A blank is marked as an assigned pick.
                     </p>
                     {assignError && (
                       <p className="text-xs text-red-600 font-semibold">{assignError}</p>
                     )}
-                    {editablePlayerIds.map((ePlayerId) => {
+                    {missing.length === 0 && (
+                      <p className="text-xs text-gray-500">Everyone has a pick.</p>
+                    )}
+                    {missing.map((ePlayerId) => {
                       const player = players.find((p) => p.id === ePlayerId);
-                      const awayColors = getTeamColor(game.awayTeam);
-                      const homeColors = getTeamColor(game.homeTeam);
-                      const current = gameDetails[ePlayerId]?.pickedTeam;
                       const rowKey = `${game.id}_${ePlayerId}`;
                       const isSaving = savingKey === rowKey;
                       const justSaved = savedKey === rowKey;
@@ -2678,25 +2752,94 @@ export function CommissionerDashboard() {
                           {justSaved && <span className="text-xs text-green-600 font-semibold">✓</span>}
                           {isSaving && <span className="text-xs text-gray-400">Saving…</span>}
                           <button
-                            onClick={() => handleAssignAndRefresh(game.id, ePlayerId, game.awayTeam)}
+                            onClick={() => handleAssignAndRefresh(game.id, ePlayerId, game.awayTeam, null)}
                             disabled={isSaving}
                             style={{ background: awayColors.bg, color: awayColors.fg }}
-                            className={`text-xs font-bold px-2 py-1 rounded disabled:opacity-50 ${
-                              current === game.awayTeam ? "ring-2 ring-offset-1 ring-blue-500" : ""
-                            }`}
+                            className="text-xs font-bold px-2 py-1 rounded disabled:opacity-50"
                           >
                             {game.awayTeam}
                           </button>
                           <button
-                            onClick={() => handleAssignAndRefresh(game.id, ePlayerId, game.homeTeam)}
+                            onClick={() => handleAssignAndRefresh(game.id, ePlayerId, game.homeTeam, null)}
                             disabled={isSaving}
                             style={{ background: homeColors.bg, color: homeColors.fg }}
-                            className={`text-xs font-bold px-2 py-1 rounded disabled:opacity-50 ${
-                              current === game.homeTeam ? "ring-2 ring-offset-1 ring-blue-500" : ""
-                            }`}
+                            className="text-xs font-bold px-2 py-1 rounded disabled:opacity-50"
                           >
                             {game.homeTeam}
                           </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {isChanging && canEditPicks && (
+                  <div className="mt-2 pt-2 border-t border-amber-300 space-y-2">
+                    <p className="text-xs text-amber-900">
+                      These picks are already in. Nothing changes until you confirm it.
+                    </p>
+                    {assignError && (
+                      <p className="text-xs text-red-600 font-semibold">{assignError}</p>
+                    )}
+                    {existingIds.map((ePlayerId) => {
+                      const player = players.find((p) => p.id === ePlayerId);
+                      const current = gameDetails[ePlayerId]?.pickedTeam;
+                      const other = current === game.awayTeam ? game.homeTeam : game.awayTeam;
+                      const rowKey = `${game.id}_${ePlayerId}`;
+                      const isSaving = savingKey === rowKey;
+                      const pending =
+                        confirmChange?.gameId === game.id && confirmChange.playerId === ePlayerId
+                          ? confirmChange
+                          : null;
+                      const name = player?.name || ePlayerId;
+                      return (
+                        <div key={ePlayerId} className="flex items-center gap-2">
+                          <span className="text-xs flex-1 truncate">
+                            {name}
+                            {current && <span className="text-gray-500"> · {current}</span>}
+                            {gameDetails[ePlayerId]?.isWildcard && (
+                              <span className="text-gray-400"> · assigned</span>
+                            )}
+                          </span>
+                          {isSaving && <span className="text-xs text-gray-400">Saving…</span>}
+                          {pending ? (
+                            <span className="flex items-center gap-2 text-xs">
+                              <span>
+                                Change {name} from {pending.from} to {pending.to}?
+                              </span>
+                              <button
+                                onClick={() =>
+                                  handleAssignAndRefresh(game.id, ePlayerId, pending.to, pending.from)
+                                }
+                                disabled={isSaving}
+                                className="font-bold text-red-700 disabled:opacity-50"
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                onClick={() => setConfirmChange(null)}
+                                className="text-gray-500"
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() =>
+                                current &&
+                                setConfirmChange({
+                                  gameId: game.id,
+                                  playerId: ePlayerId,
+                                  from: current,
+                                  to: other,
+                                })
+                              }
+                              disabled={isSaving || !current}
+                              className="text-xs font-semibold text-amber-800 underline disabled:opacity-50"
+                            >
+                              Change to {other}
+                            </button>
+                          )}
                         </div>
                       );
                     })}
@@ -4499,7 +4642,8 @@ export function App() {
               </button>
             </div>
           </div>
-          <div className="flex gap-4 text-sm overflow-x-auto xl:overflow-visible">
+          <div className="flex flex-col gap-2 text-sm">
+          <div className="flex gap-2 flex-wrap">
             <button
               onClick={() => setView("picks")}
               className={`py-2 px-4 rounded font-medium transition ${
@@ -4560,6 +4704,29 @@ export function App() {
             >
               Payouts
             </button>
+            <button
+              onClick={() => setView("polls")}
+              className={`py-2 px-4 rounded font-medium transition ${
+                view === "polls"
+                  ? "bg-blue-500 text-white"
+                  : "bg-gray-200 hover:bg-gray-300"
+              }`}
+            >
+              Polls
+            </button>
+            <button
+              onClick={() => setView("progress")}
+              className={`py-2 px-4 rounded font-medium transition ${
+                view === "progress"
+                  ? "bg-blue-500 text-white"
+                  : "bg-gray-200 hover:bg-gray-300"
+              }`}
+            >
+              Week Progress
+            </button>
+          </div>
+          {isCommissioner && (
+          <div className="flex gap-2 flex-wrap">
             {isCommissioner && (
               <button
                 onClick={() => setView("commissioner")}
@@ -4608,27 +4775,9 @@ export function App() {
                 Commish What If?
               </button>
             )}
-            <button
-              onClick={() => setView("polls")}
-              className={`py-2 px-4 rounded font-medium transition ${
-                view === "polls"
-                  ? "bg-blue-500 text-white"
-                  : "bg-gray-200 hover:bg-gray-300"
-              }`}
-            >
-              Polls
-            </button>
-            <button
-              onClick={() => setView("progress")}
-              className={`py-2 px-4 rounded font-medium transition ${
-                view === "progress"
-                  ? "bg-blue-500 text-white"
-                  : "bg-gray-200 hover:bg-gray-300"
-              }`}
-            >
-              Week Progress
-            </button>
           </div>
+          )}
+        </div>
         </div>
       </div>
 
