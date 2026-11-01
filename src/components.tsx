@@ -2,7 +2,7 @@
  * React Components for Pick 'Em App
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useLeague } from "./LeagueContext";
 import { useAuth } from "./AuthContext";
 import { getTeamColor, getTeamDisplayName, getTeamLogoUrl, TEAM_FULL_NAMES } from "./teamColors";
@@ -1251,9 +1251,161 @@ function WeekWinnerMatrix({
   );
 }
 
+// Each remaining game can go either way. A player can still win the week
+// when at least one of those finishes leaves them tied for the most points.
+// A tie game isn't one of the finishes: a tie scores nobody, same as the
+// Sunday-night / Monday-night grid.
+function whoCanStillWinWeek(
+  playerIds: string[],
+  base: number[],
+  games: number[][][],
+  breakTie: ((leaderIndexes: number[]) => number[] | null) | null
+): { alive: Set<string>; ways: number } {
+  const n = playerIds.length;
+  const alive = new Array<boolean>(n).fill(false);
+  let found = 0;
+  let ways = 0;
+  const scores = base.slice();
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.001;
+
+  const mark = () => {
+    ways += 1;
+    let best = -Infinity;
+    for (let i = 0; i < n; i++) if (scores[i] > best) best = scores[i];
+    const leaders: number[] = [];
+    for (let i = 0; i < n; i++) if (near(scores[i], best)) leaders.push(i);
+    let winners = leaders;
+    if (leaders.length > 1 && breakTie) {
+      const broken = breakTie(leaders);
+      if (broken && broken.length > 0) winners = broken;
+    }
+    for (const i of winners) {
+      if (!alive[i]) {
+        alive[i] = true;
+        found += 1;
+      }
+    }
+  };
+
+  const walk = (gameIndex: number) => {
+    if (found === n) return;
+    if (gameIndex === games.length) {
+      mark();
+      return;
+    }
+    for (const delta of games[gameIndex]) {
+      for (let i = 0; i < n; i++) scores[i] += delta[i];
+      walk(gameIndex + 1);
+      for (let i = 0; i < n; i++) scores[i] -= delta[i];
+      if (found === n) return;
+    }
+  };
+
+  if (games.length === 0) mark();
+  else walk(0);
+
+  const ids = new Set<string>();
+  playerIds.forEach((id, i) => {
+    if (alive[i]) ids.add(id);
+  });
+  return { alive: ids, ways };
+}
+
+function WhoCanStillWin({
+  players,
+  alive,
+  gamesLeft,
+  ways,
+  gamesStillHidden,
+  answerKnown,
+  viewerId,
+}: {
+  players: schema.PlayerDoc[];
+  alive: Set<string>;
+  gamesLeft: number;
+  ways: number;
+  gamesStillHidden: number;
+  answerKnown: boolean;
+  viewerId: string | null;
+}) {
+  const living = players.filter((p) => alive.has(p.id));
+  const out = players.filter((p) => !alive.has(p.id));
+  const weekFinal = gamesLeft === 0 && gamesStillHidden === 0;
+  const waitingOnLocks = gamesLeft === 0 && gamesStillHidden > 0;
+
+  return (
+    <div className="border rounded bg-white overflow-hidden mb-4 max-w-3xl">
+      <div className="bg-gray-100 px-3 py-1.5 text-xs font-bold">Who can still win the week</div>
+      <div className="p-3">
+        {waitingOnLocks ? (
+          <p className="text-sm text-gray-600">
+            Picks for the games still open aren't visible yet, so this can't say who's out.
+          </p>
+        ) : weekFinal ? (
+          <p className="text-sm">
+            {living.length === 1
+              ? `${living[0]?.name} won the week.`
+              : `${living.map((p) => p.name).join(", ")} tied for the week.`}
+          </p>
+        ) : out.length === 0 ? (
+          <p className="text-sm">Everyone can still win the week.</p>
+        ) : (
+          <>
+            <p className="text-xs text-gray-500 mb-2">
+              {living.length} of {players.length} still {living.length === 1 ? "wins" : "win"} the week in at least one of{" "}
+              {ways.toLocaleString()} ways the {gamesLeft} remaining {gamesLeft === 1 ? "game" : "games"} can finish.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {living.map((p) => (
+                <span
+                  key={p.id}
+                  className={`text-sm font-semibold px-2 py-0.5 rounded ${
+                    p.id === viewerId ? "bg-blue-100 text-blue-900" : "bg-green-50 text-green-900"
+                  }`}
+                >
+                  {p.name}
+                </span>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-2">
+              {gamesStillHidden > 0 ? "Out on the games that have locked: " : "Out: "}
+              {out.map((p) => p.name).join(", ")}
+            </p>
+          </>
+        )}
+        {gamesStillHidden > 0 && !waitingOnLocks && (
+          <p className="text-xs text-gray-500 mt-2">
+            {gamesStillHidden} {gamesStillHidden === 1 ? "game hasn't" : "games haven't"} locked. Those picks aren't in
+            this, so someone listed as out can still get back in.
+          </p>
+        )}
+        {!weekFinal && !waitingOnLocks && (
+          <p className="text-xs text-gray-400 mt-2">
+            {answerKnown
+              ? "The tiebreaker answer is in, so a tie for the lead goes to the closest guess."
+              : "A tie for the lead still counts. The tiebreaker isn't in yet."}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: boolean }) {
-  const { leagueId, playerId, games, players, standings, currentWeek, setCurrentWeek, league, loading, isCommissioner } =
-    useLeague();
+  const {
+    leagueId,
+    playerId,
+    games,
+    players,
+    standings,
+    currentWeek,
+    setCurrentWeek,
+    league,
+    loading,
+    isCommissioner,
+    tiebreakerAnswer,
+    tiebreakerRule,
+  } = useLeague();
   const now = useNow();
   const [picks, setPicks] = useState<schema.PickDoc[]>([]);
   const [guessByPlayer, setGuessByPlayer] = useState<Record<string, number>>({});
@@ -1374,6 +1526,68 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
 
   const pickedCount = pendingGames.filter((g) => chosen[g.id]).length;
 
+  const pendingKey = pendingGames.map((g) => g.id).join(",");
+  const stillInIt = useMemo(() => {
+    const ids = activePlayers.map((p) => p.id);
+    const openIds = new Set(pendingKey ? pendingKey.split(",") : []);
+    const base = ids.map((id) =>
+      picks
+        .filter((p) => p.playerId === id && !openIds.has(p.gameId))
+        .reduce((sum, p) => sum + (p.pointsAwarded || 0), 0)
+    );
+    const indexOf = new Map(ids.map((id, i) => [id, i]));
+    let skipped = 0;
+    const branches: number[][][] = [];
+    pendingGames.forEach((g) => {
+      const gamePicks = picks.filter((p) => p.gameId === g.id);
+      if (gamePicks.length === 0) {
+        skipped += 1;
+        return;
+      }
+      const awayPts = pointsIfWins(g, g.awayTeam);
+      const homePts = pointsIfWins(g, g.homeTeam);
+      const away = new Array<number>(ids.length).fill(0);
+      const home = new Array<number>(ids.length).fill(0);
+      gamePicks.forEach((p) => {
+        const i = indexOf.get(p.playerId);
+        if (i === undefined) return;
+        if (p.pickedTeam === g.awayTeam) away[i] = awayPts;
+        else if (p.pickedTeam === g.homeTeam) home[i] = homePts;
+      });
+      branches.push([away, home]);
+    });
+    const answerKnown = tiebreakerAnswer !== null && !!tiebreakerRule;
+    const breakTie =
+      !answerKnown || !tiebreakerRule || tiebreakerAnswer === null
+        ? null
+        : (leaderIndexes: number[]) => {
+            const leaderIds = leaderIndexes.map((i) => ids[i]);
+            if (leaderIds.some((id) => guessByPlayer[id] === undefined)) return null;
+            const guessMap = new Map(leaderIds.map((id) => [id, guessByPlayer[id]]));
+            const winners = firebaseUtils.winningTiebreakerPlayerIds(
+              leaderIds,
+              guessMap,
+              tiebreakerAnswer,
+              tiebreakerRule
+            );
+            if (winners.length === 0) return null;
+            const winnerSet = new Set(winners);
+            return leaderIndexes.filter((i) => winnerSet.has(ids[i]));
+          };
+    const result = whoCanStillWinWeek(ids, base, branches, breakTie);
+    return {
+      alive: result.alive,
+      ways: result.ways * 2 ** skipped,
+      gamesLeft: pendingGames.length,
+    };
+    // pendingKey stands in for the open games; pointsIfWins only depends on those picks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rosterKey, pendingKey, picks, guessByPlayer, tiebreakerAnswer, tiebreakerRule]);
+
+  const gamesStillHidden = games.filter(
+    (g) => !g.result && !pendingGames.some((p) => p.id === g.id)
+  ).length;
+
   const { snf, mnf } = primetimeGames(games);
   // Sunday night locking also locks Monday night, so both games' picks are
   // public at that moment. Show the grid then, until Monday night is final.
@@ -1412,6 +1626,16 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
       ) : loadError ? (
         <div className="text-sm text-red-600">{loadError}</div>
       ) : (
+        <>
+        <WhoCanStillWin
+          players={activePlayers}
+          alive={stillInIt.alive}
+          gamesLeft={stillInIt.gamesLeft}
+          ways={stillInIt.ways}
+          gamesStillHidden={gamesStillHidden}
+          answerKnown={tiebreakerAnswer !== null && !!tiebreakerRule}
+          viewerId={playerId}
+        />
         <div className="grid grid-cols-[auto_20rem_auto] gap-3 items-start w-max max-w-full">
           <WhatIfTable
             title={`Week ${currentWeek}`}
@@ -1512,6 +1736,7 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
             onFollow={followPlayer}
           />
         </div>
+        </>
       )}
     </div>
   );
