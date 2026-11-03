@@ -200,6 +200,32 @@ export async function getWeeklyTiebreaker(
     | null;
 }
 
+/** Every week's question, rule, and answer. Readable by the whole league. */
+export async function getWeeklyTiebreakers(
+  leagueId: string
+): Promise<schema.WeeklyTiebreakerDoc[]> {
+  const snap = await getDocs(collection(db, `leagues/${leagueId}/weeklyTiebreakers`));
+  return snap.docs.map((d) => {
+    const data = d.data() as schema.WeeklyTiebreakerDoc;
+    return { ...data, week: data.week ?? Number(d.id) };
+  });
+}
+
+/**
+ * Guesses the whole league can see: visibleToAll is set once that week's
+ * last game locks. A list query has to filter on that flag itself.
+ */
+export async function getVisibleTiebreakerGuesses(
+  leagueId: string
+): Promise<schema.TiebreakerGuessDoc[]> {
+  const q = query(
+    collection(db, `leagues/${leagueId}/tiebreakerGuesses`),
+    where("visibleToAll", "==", true)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as schema.TiebreakerGuessDoc);
+}
+
 // ============================================================================
 // WRITE OPERATIONS
 // ============================================================================

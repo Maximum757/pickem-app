@@ -3101,6 +3101,23 @@ export function CommissionerDashboard() {
 // locks, same moment those last-game picks become public.
 // ============================================================================
 
+function formatTiebreakerNumber(n: number): string {
+  const rounded = Math.round(n * 100) / 100;
+  return String(rounded);
+}
+
+// Signed miss: positive means the guess was over the answer.
+function formatTiebreakerDiff(guess: number, answer: number): string {
+  const diff = Math.round((guess - answer) * 100) / 100;
+  if (diff === 0) return "0";
+  const body = String(Math.abs(diff));
+  return diff > 0 ? `+${body}` : `−${body}`;
+}
+
+function absoluteTiebreakerDiff(guess: number, answer: number): number {
+  return Math.abs(Math.round((guess - answer) * 100) / 100);
+}
+
 // Columns run highest score to lowest. The person looking is always the
 // leftmost column, even when they aren't leading.
 function compareWeeklyColumns(
@@ -4033,6 +4050,23 @@ export function WeeklySummary() {
     compareWeeklyColumns(a, b, (id) => pointsByRecapPlayer.get(id) || 0, playerId)
   );
 
+  const answer: number | null =
+    weekTiebreaker?.answer === null || weekTiebreaker?.answer === undefined
+      ? null
+      : weekTiebreaker.answer;
+  const closestGuessIds = new Set<string>();
+  if (answer !== null) {
+    const guessers = recapPlayers.filter((p) => tbGuessByPlayer.has(p.id)).map((p) => p.id);
+    firebaseUtils
+      .winningTiebreakerPlayerIds(
+        guessers,
+        tbGuessByPlayer,
+        answer,
+        weekTiebreaker?.rule ?? "closest"
+      )
+      .forEach((id) => closestGuessIds.add(id));
+  }
+
   const tiedAtTop =
     weeklyResults.length >= 2 &&
     weeklyResults[0].points > 0 &&
@@ -4069,6 +4103,15 @@ export function WeeklySummary() {
         <div className="text-sm text-gray-600 mb-6">Loading...</div>
       ) : (
         <>
+          {weekTiebreaker?.question && (
+            <p className="text-sm text-gray-700 mb-2">
+              {weekTiebreaker.question}
+              {answer !== null && (
+                <span className="font-semibold"> · Answer {formatTiebreakerNumber(answer)}</span>
+              )}
+            </p>
+          )}
+
           {/* Everyone's picks, color-coded, for the week that just locked */}
           <div className="mb-6 overflow-x-auto border rounded">
             <table className="w-full text-xs border-collapse table-fixed">
@@ -4134,6 +4177,49 @@ export function WeeklySummary() {
                     })}
                   </tr>
                 ))}
+                <tr className="border-t">
+                  <td className="p-1 font-semibold whitespace-nowrap sticky left-0 bg-white">
+                    <div>TB</div>
+                    {answer !== null && (
+                      <div className="text-[10px] font-bold text-green-700">
+                        {formatTiebreakerNumber(answer)}
+                      </div>
+                    )}
+                  </td>
+                  {recapColumns.map((p) => {
+                    const guess = tbGuessByPlayer.get(p.id);
+                    if (guess === undefined) {
+                      return (
+                        <td key={p.id} className="p-0.5">
+                          <div className="w-full h-9 box-border border-2 border-dashed border-gray-200 rounded flex items-center justify-center text-[10px] text-gray-300 mx-auto">
+                            —
+                          </div>
+                        </td>
+                      );
+                    }
+                    const closest = closestGuessIds.has(p.id);
+                    const carried = weekTbGuesses.find((g) => g.playerId === p.id)?.carriedForward;
+                    return (
+                      <td key={p.id} className="p-0.5">
+                        <div
+                          className={`w-full h-9 box-border border-2 rounded flex flex-col items-center justify-center leading-none mx-auto ${
+                            closest ? "bg-green-50 border-green-600" : "bg-gray-50 border-transparent"
+                          }`}
+                          title={carried ? "Carried forward from an earlier week" : undefined}
+                        >
+                          <span className="text-[10px] font-bold text-gray-800">
+                            {formatTiebreakerNumber(guess)}
+                          </span>
+                          {answer !== null && (
+                            <span className={`text-[9px] font-semibold ${closest ? "text-green-700" : "text-gray-500"}`}>
+                              {formatTiebreakerDiff(guess, answer)}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
               </tbody>
             </table>
           </div>
@@ -4148,10 +4234,16 @@ export function WeeklySummary() {
                     <th className="text-left p-1.5">Player</th>
                     <th className="text-right p-1.5">Pts</th>
                     <th className="text-right p-1.5">W</th>
+                    <th className="text-right p-1.5" title="Tiebreaker guess, and how far it was from the answer">
+                      TB
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {weeklyResults.map((r, i) => (
+                  {weeklyResults.map((r, i) => {
+                    const guess = tbGuessByPlayer.get(r.player.id);
+                    const closest = closestGuessIds.has(r.player.id);
+                    return (
                     <tr key={r.player.id} className="border-t">
                       <td className="p-1.5 text-gray-500">{i + 1}</td>
                       <td className="p-1.5 max-w-[9rem]">
@@ -4166,8 +4258,23 @@ export function WeeklySummary() {
                       </td>
                       <td className="p-1.5 text-right font-semibold">{r.points}</td>
                       <td className="p-1.5 text-right">{r.correct}</td>
+                      <td className="p-1.5 text-right">
+                        {guess === undefined ? (
+                          <span className="text-gray-300">—</span>
+                        ) : (
+                          <div className="leading-tight">
+                            <div className="font-semibold">{formatTiebreakerNumber(guess)}</div>
+                            {answer !== null && (
+                              <div className={`text-[10px] font-semibold ${closest ? "text-green-700" : "text-gray-500"}`}>
+                                {formatTiebreakerDiff(guess, answer)}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -4231,10 +4338,213 @@ export function WeeklySummary() {
 }
 
 // ============================================================================
+// TIEBREAKER RECORD - season-long, how close each guess was
+// ============================================================================
+
+export function TiebreakerRecordScreen() {
+  const { leagueId, playerId, players } = useLeague();
+  const [weeks, setWeeks] = useState<schema.WeeklyTiebreakerDoc[]>([]);
+  const [guesses, setGuesses] = useState<schema.TiebreakerGuessDoc[]>([]);
+  const [loadingRecord, setLoadingRecord] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!leagueId) return;
+    setLoadingRecord(true);
+    setLoadError(null);
+    Promise.all([
+      firebaseUtils.getWeeklyTiebreakers(leagueId),
+      firebaseUtils.getVisibleTiebreakerGuesses(leagueId),
+    ])
+      .then(([weekDocs, guessDocs]) => {
+        setWeeks(weekDocs);
+        setGuesses(guessDocs);
+      })
+      .catch((err) => setLoadError(`Failed to load tiebreakers: ${err}`))
+      .finally(() => setLoadingRecord(false));
+  }, [leagueId]);
+
+  const roster = players.filter((p) => !p.removedFromLeague);
+  const guessAt = new Map<string, schema.TiebreakerGuessDoc>();
+  guesses.forEach((g) => guessAt.set(`${g.playerId}_${g.week}`, g));
+
+  const scoredWeeks = weeks
+    .filter((w) => w.answer !== null && w.answer !== undefined)
+    .filter((w) => roster.some((p) => guessAt.has(`${p.id}_${w.week}`)))
+    .sort((a, b) => a.week - b.week);
+
+  const rows = roster.map((player) => {
+    let totalOff = 0;
+    let weeksGuessed = 0;
+    let timesClosest = 0;
+    scoredWeeks.forEach((week) => {
+      const guess = guessAt.get(`${player.id}_${week.week}`);
+      if (!guess || week.answer === null || week.answer === undefined) return;
+      weeksGuessed += 1;
+      totalOff += absoluteTiebreakerDiff(guess.guess, week.answer);
+      const guessers = roster.filter((p) => guessAt.has(`${p.id}_${week.week}`)).map((p) => p.id);
+      const values = new Map<string, number>();
+      guessers.forEach((id) => {
+        const g = guessAt.get(`${id}_${week.week}`);
+        if (g) values.set(id, g.guess);
+      });
+      const closest = firebaseUtils.winningTiebreakerPlayerIds(
+        guessers,
+        values,
+        week.answer,
+        week.rule ?? "closest"
+      );
+      if (closest.includes(player.id)) timesClosest += 1;
+    });
+    return {
+      player,
+      weeksGuessed,
+      totalOff: Math.round(totalOff * 100) / 100,
+      avgOff: weeksGuessed === 0 ? null : Math.round((totalOff / weeksGuessed) * 10) / 10,
+      timesClosest,
+    };
+  });
+  rows.sort(
+    (a, b) =>
+      (a.avgOff ?? Number.POSITIVE_INFINITY) - (b.avgOff ?? Number.POSITIVE_INFINITY) ||
+      b.timesClosest - a.timesClosest ||
+      a.player.name.localeCompare(b.player.name)
+  );
+
+  return (
+    <div className="p-4">
+      <h2 className="text-2xl font-bold mb-1">Tiebreakers</h2>
+      <p className="text-sm text-gray-600 mb-4">
+        How far off each guess was, once that week's answer is in. Closest follows that week's rule.
+        Avg off is the average distance, over or under.
+      </p>
+      {loadingRecord ? (
+        <div className="text-sm text-gray-600">Loading...</div>
+      ) : loadError ? (
+        <div className="text-sm text-red-600">{loadError}</div>
+      ) : scoredWeeks.length === 0 ? (
+        <div className="text-sm text-gray-600">No tiebreaker answers yet.</div>
+      ) : (
+        <>
+          <div className="border rounded overflow-hidden mb-6">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left p-1.5 w-6">#</th>
+                  <th className="text-left p-1.5">Player</th>
+                  <th className="text-right p-1.5">Weeks</th>
+                  <th className="text-right p-1.5">Avg off</th>
+                  <th className="text-right p-1.5">Total off</th>
+                  <th className="text-right p-1.5" title="Weeks they had the closest guess in the league">
+                    Closest
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr
+                    key={r.player.id}
+                    className={`border-t ${r.player.id === playerId ? "bg-blue-50 font-semibold" : ""}`}
+                  >
+                    <td className="p-1.5 text-gray-500">{r.weeksGuessed === 0 ? "—" : i + 1}</td>
+                    <td className="p-1.5">{r.player.name}</td>
+                    <td className="p-1.5 text-right">{r.weeksGuessed}</td>
+                    <td className="p-1.5 text-right">{r.avgOff === null ? "—" : r.avgOff.toFixed(1)}</td>
+                    <td className="p-1.5 text-right">{r.weeksGuessed === 0 ? "—" : r.totalOff}</td>
+                    <td className="p-1.5 text-right">{r.timesClosest}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="overflow-x-auto border rounded">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr>
+                  <th className="p-1 bg-gray-100 sticky left-0 text-left min-w-[7rem]">Week</th>
+                  {rows.map((r) => (
+                    <th
+                      key={r.player.id}
+                      className={`px-0.5 py-1 text-center whitespace-nowrap ${
+                        r.player.id === playerId ? "bg-blue-50" : "bg-gray-100"
+                      }`}
+                      title={r.player.name}
+                    >
+                      {r.player.shortName || r.player.name.slice(0, 5)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {scoredWeeks.map((week) => {
+                  const weekAnswer = week.answer as number;
+                  const guessers = roster.filter((p) => guessAt.has(`${p.id}_${week.week}`)).map((p) => p.id);
+                  const values = new Map<string, number>();
+                  guessers.forEach((id) => {
+                    const g = guessAt.get(`${id}_${week.week}`);
+                    if (g) values.set(id, g.guess);
+                  });
+                  const closest = new Set(
+                    firebaseUtils.winningTiebreakerPlayerIds(
+                      guessers,
+                      values,
+                      weekAnswer,
+                      week.rule ?? "closest"
+                    )
+                  );
+                  return (
+                    <tr key={week.week} className="border-t">
+                      <td className="p-1 sticky left-0 bg-white" title={week.question}>
+                        <div className="font-semibold whitespace-nowrap">Week {week.week}</div>
+                        <div className="text-[10px] text-gray-500 truncate max-w-[9rem]">{week.question}</div>
+                        <div className="text-[10px] font-bold text-green-700">
+                          {formatTiebreakerNumber(weekAnswer)}
+                        </div>
+                      </td>
+                      {rows.map((r) => {
+                        const guess = guessAt.get(`${r.player.id}_${week.week}`);
+                        if (!guess) {
+                          return (
+                            <td key={r.player.id} className="p-0.5 text-center text-gray-300">
+                              —
+                            </td>
+                          );
+                        }
+                        const isClosest = closest.has(r.player.id);
+                        return (
+                          <td key={r.player.id} className="p-0.5">
+                            <div
+                              className={`rounded px-0.5 py-0.5 text-center leading-none ${
+                                isClosest ? "bg-green-50 text-green-800" : "text-gray-700"
+                              }`}
+                              title={guess.carriedForward ? "Carried forward from an earlier week" : undefined}
+                            >
+                              <div className="text-[10px] font-bold">{formatTiebreakerNumber(guess.guess)}</div>
+                              <div className={`text-[9px] font-semibold ${isClosest ? "text-green-700" : "text-gray-500"}`}>
+                                {formatTiebreakerDiff(guess.guess, weekAnswer)}
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
 // MAIN APP COMPONENT
 // ============================================================================
 
-type ViewType = "picks" | "mysummary" | "everyonespicks" | "progress" | "whatif" | "commishwhatif" | "standings" | "payouts" | "commissioner" | "summary" | "members" | "polls";
+type ViewType = "picks" | "mysummary" | "everyonespicks" | "progress" | "whatif" | "commishwhatif" | "standings" | "payouts" | "commissioner" | "summary" | "members" | "polls" | "tiebreakers";
 
 // ============================================================================
 // MEMBERS SCREEN - Roster with contact info and dues tracking (commissioner only)
@@ -4910,6 +5220,16 @@ export function App() {
               Standings
             </button>
             <button
+              onClick={() => setView("tiebreakers")}
+              className={`py-2 px-4 rounded font-medium transition ${
+                view === "tiebreakers"
+                  ? "bg-blue-500 text-white"
+                  : "bg-gray-200 hover:bg-gray-300"
+              }`}
+            >
+              Tiebreakers
+            </button>
+            <button
               onClick={() => setView("whatif")}
               className={`py-2 px-4 rounded font-medium transition ${
                 view === "whatif"
@@ -5012,6 +5332,7 @@ export function App() {
         {!loading && view === "mysummary" && <MySummaryScreen />}
         {!loading && view === "everyonespicks" && <EveryonesPicksScreen />}
         {!loading && view === "standings" && <StandingsScreen />}
+        {!loading && view === "tiebreakers" && <TiebreakerRecordScreen />}
         {!loading && view === "payouts" && <PayoutsScreen />}
         {!loading && view === "commissioner" && isCommissioner && <CommissionerDashboard />}
         {!loading && view === "summary" && isCommissioner && <WeeklySummary />}
