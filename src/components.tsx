@@ -1770,6 +1770,7 @@ export function StandingsScreen() {
   // to season order. Rank numbers themselves stay season rank so you can
   // still see overall place after reordering by a week.
   const [sort, setSort] = useState<StandingsSort>({ column: "season" });
+  const [tiebreakersOpen, setTiebreakersOpen] = useState(false);
 
   React.useEffect(() => {
     if (!leagueId || !playerId || !league) return;
@@ -2086,6 +2087,22 @@ export function StandingsScreen() {
             })}
           </tbody>
         </table>
+      </div>
+
+      <div className="mt-8 border rounded overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setTiebreakersOpen((open) => !open)}
+          className="w-full flex items-center justify-between bg-gray-100 px-3 py-2 text-sm font-bold text-left"
+        >
+          <span>Tiebreakers</span>
+          <span className="text-xs font-semibold text-gray-500">{tiebreakersOpen ? "Hide" : "Show"}</span>
+        </button>
+        {tiebreakersOpen && (
+          <div className="p-3">
+            <TiebreakerRecordScreen />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -4412,9 +4429,8 @@ export function TiebreakerRecordScreen() {
   );
 
   return (
-    <div className="p-4">
-      <h2 className="text-2xl font-bold mb-1">Tiebreakers</h2>
-      <p className="text-sm text-gray-600 mb-4">
+    <div>
+      <p className="text-xs text-gray-500 mb-3">
         How far off each guess was, once that week's answer is in. Closest follows that week's rule.
         Avg off is the average distance, over or under.
       </p>
@@ -4544,7 +4560,7 @@ export function TiebreakerRecordScreen() {
 // MAIN APP COMPONENT
 // ============================================================================
 
-type ViewType = "picks" | "mysummary" | "everyonespicks" | "progress" | "whatif" | "commishwhatif" | "standings" | "payouts" | "commissioner" | "summary" | "members" | "polls" | "tiebreakers";
+type ViewType = "picks" | "mysummary" | "everyonespicks" | "progress" | "whatif" | "commishwhatif" | "standings" | "payouts" | "commissioner" | "summary" | "members" | "polls";
 
 // ============================================================================
 // MEMBERS SCREEN - Roster with contact info and dues tracking (commissioner only)
@@ -5220,16 +5236,6 @@ export function App() {
               Standings
             </button>
             <button
-              onClick={() => setView("tiebreakers")}
-              className={`py-2 px-4 rounded font-medium transition ${
-                view === "tiebreakers"
-                  ? "bg-blue-500 text-white"
-                  : "bg-gray-200 hover:bg-gray-300"
-              }`}
-            >
-              Tiebreakers
-            </button>
-            <button
               onClick={() => setView("whatif")}
               className={`py-2 px-4 rounded font-medium transition ${
                 view === "whatif"
@@ -5332,7 +5338,6 @@ export function App() {
         {!loading && view === "mysummary" && <MySummaryScreen />}
         {!loading && view === "everyonespicks" && <EveryonesPicksScreen />}
         {!loading && view === "standings" && <StandingsScreen />}
-        {!loading && view === "tiebreakers" && <TiebreakerRecordScreen />}
         {!loading && view === "payouts" && <PayoutsScreen />}
         {!loading && view === "commissioner" && isCommissioner && <CommissionerDashboard />}
         {!loading && view === "summary" && isCommissioner && <WeeklySummary />}
