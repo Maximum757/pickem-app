@@ -4251,16 +4251,10 @@ export function WeeklySummary() {
                     <th className="text-left p-1.5">Player</th>
                     <th className="text-right p-1.5">Pts</th>
                     <th className="text-right p-1.5">W</th>
-                    <th className="text-right p-1.5" title="Tiebreaker guess, and how far it was from the answer">
-                      TB
-                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {weeklyResults.map((r, i) => {
-                    const guess = tbGuessByPlayer.get(r.player.id);
-                    const closest = closestGuessIds.has(r.player.id);
-                    return (
+                  {weeklyResults.map((r, i) => (
                     <tr key={r.player.id} className="border-t">
                       <td className="p-1.5 text-gray-500">{i + 1}</td>
                       <td className="p-1.5 max-w-[9rem]">
@@ -4275,23 +4269,8 @@ export function WeeklySummary() {
                       </td>
                       <td className="p-1.5 text-right font-semibold">{r.points}</td>
                       <td className="p-1.5 text-right">{r.correct}</td>
-                      <td className="p-1.5 text-right">
-                        {guess === undefined ? (
-                          <span className="text-gray-300">—</span>
-                        ) : (
-                          <div className="leading-tight">
-                            <div className="font-semibold">{formatTiebreakerNumber(guess)}</div>
-                            {answer !== null && (
-                              <div className={`text-[10px] font-semibold ${closest ? "text-green-700" : "text-gray-500"}`}>
-                                {formatTiebreakerDiff(guess, answer)}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </td>
                     </tr>
-                    );
-                  })}
+                  ))}
                 </tbody>
               </table>
             </div>
