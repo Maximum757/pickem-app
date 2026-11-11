@@ -27,6 +27,40 @@ export function isPastLock(game: TimedGame, weekGames: TimedGame[], now: Date): 
   return !!lockAt && lockAt <= now;
 }
 
+type LockableGame = TimedGame & { isLocked?: boolean; isManuallyLocked?: boolean };
+
+/**
+ * True once the week's first game has locked — usually Thursday Night
+ * Football kickoff. Used so Weekly Recap can stay on last week after the
+ * commissioner advances the player week, then flip forward when TNF locks.
+ */
+export function weekFirstGameLocked(weekGames: LockableGame[], now: Date): boolean {
+  // Wall clock only — ignore isLocked flags. Those can be set early (manual
+  // lock / cron) and were yanking Weekly Recap onto the new week before TNF.
+  const timed = weekGames.filter((g) => !g.timeTBD && g.gameTime);
+  if (!timed.length) return false;
+  let earliest = timed[0];
+  for (const g of timed) {
+    if (g.gameTime! < earliest.gameTime!) earliest = g;
+  }
+  return earliest.gameTime! <= now;
+}
+
+/**
+ * Weekly Recap should stay on last week after the commissioner advances
+ * `currentWeek` for players, until this week's first kickoff (TNF) locks.
+ * Then it can open on the new current week.
+ */
+export function defaultRecapWeek(
+  officialWeek: number,
+  officialWeekGames: LockableGame[],
+  now: Date = new Date(),
+): number {
+  if (officialWeek <= 0) return officialWeek;
+  if (weekFirstGameLocked(officialWeekGames, now)) return officialWeek;
+  return officialWeek - 1;
+}
+
 /**
  * Sunday night is the latest Sunday kickoff. Monday night is the week's
  * Monday game. A week with anything other than one Monday game has no

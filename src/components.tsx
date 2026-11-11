@@ -8,7 +8,7 @@ import { useAuth } from "./AuthContext";
 import { getTeamColor, getTeamDisplayName, getTeamLogoUrl, TEAM_FULL_NAMES } from "./teamColors";
 import * as firebaseUtils from "./firebase-utils";
 import * as schema from "./firestore-schema";
-import { effectiveLockTime, isPastLock, primetimeGames } from "./lockTime";
+import { defaultRecapWeek, effectiveLockTime, isPastLock, primetimeGames } from "./lockTime";
 
 // Shared kickoff-time formatter — every place a game's time gets displayed
 // uses this, so they can't drift out of sync with each other. Explicit
@@ -3967,8 +3967,18 @@ export function WeekProgressScreen() {
 }
 
 export function WeeklySummary() {
-  const { leagueId, playerId, players, standings, currentWeek } = useLeague();
-  const [summaryWeek, setSummaryWeek] = useState(currentWeek);
+  const { leagueId, playerId, players, standings, currentWeek, league } = useLeague();
+  // What players open to — not whichever week the commissioner is browsing.
+  const playerWeek = league?.currentWeek ?? currentWeek;
+  const now = useNow();
+  const [summaryWeek, setSummaryWeek] = useState(() => Math.max(1, playerWeek - 1));
+  const [followDefault, setFollowDefault] = useState(true);
+  const [playerWeekLockGames, setPlayerWeekLockGames] = useState<
+    Array<{ timeTBD: boolean; isLocked: boolean; isManuallyLocked: boolean; gameTime: Date | null }>
+  >([]);
+  // Only trust lock games once they match playerWeek — otherwise advancing
+  // reuses last week's locked slate and the recap jumps forward early.
+  const [lockGamesForWeek, setLockGamesForWeek] = useState<number | null>(null);
   const [summaryGames, setSummaryGames] = useState<schema.UIGame[]>([]);
   const [summaryPicks, setSummaryPicks] = useState<schema.PickDoc[]>([]);
   const [nextWeekGames, setNextWeekGames] = useState<schema.UIGame[]>([]);
@@ -3977,6 +3987,51 @@ export function WeeklySummary() {
   const [weekTbGuesses, setWeekTbGuesses] = useState<schema.TiebreakerGuessDoc[]>([]);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const nextWeek = summaryWeek + 1;
+
+  const recapDefault = defaultRecapWeek(
+    playerWeek,
+    lockGamesForWeek === playerWeek ? playerWeekLockGames : [],
+    now,
+  );
+
+  // Stay on last week after "Make Week N current for players" until that
+  // week's first kickoff (TNF) locks — then the recap opens on week N.
+  React.useEffect(() => {
+    if (!leagueId || playerWeek == null) return;
+    let cancelled = false;
+    setLockGamesForWeek(null);
+    (async () => {
+      try {
+        const gamesData = await firebaseUtils.getGamesForWeek(leagueId, playerWeek);
+        if (cancelled) return;
+        setPlayerWeekLockGames(
+          gamesData.map((g) => ({
+            timeTBD: !!g.timeTBD,
+            isLocked: !!g.isLocked,
+            isManuallyLocked: !!g.isManuallyLocked,
+            gameTime: g.gameTime ? g.gameTime.toDate() : null,
+          })),
+        );
+        setLockGamesForWeek(playerWeek);
+      } catch {
+        if (cancelled) return;
+        setPlayerWeekLockGames([]);
+        setLockGamesForWeek(playerWeek);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [leagueId, playerWeek]);
+
+  React.useEffect(() => {
+    if (followDefault) setSummaryWeek(recapDefault);
+  }, [recapDefault, followDefault]);
+
+  function selectSummaryWeek(week: number) {
+    setSummaryWeek(week);
+    setFollowDefault(week === recapDefault);
+  }
 
   React.useEffect(() => {
     if (!leagueId) return;
@@ -4114,7 +4169,7 @@ export function WeeklySummary() {
     <div className="p-4 max-w-6xl">
       <h2 className="text-2xl font-bold mb-3">Weekly Recap</h2>
 
-      <WeekSelector currentWeek={summaryWeek} officialWeek={currentWeek} onChange={setSummaryWeek} />
+      <WeekSelector currentWeek={summaryWeek} officialWeek={recapDefault} onChange={selectSummaryWeek} />
 
       {loadingSummary ? (
         <div className="text-sm text-gray-600 mb-6">Loading...</div>
