@@ -1077,6 +1077,7 @@ function WhatIfTable({
                 <td className="px-1.5 py-0.5 text-right whitespace-nowrap">
                   <span className="font-semibold">{r.points}</span>
                   {r.delta > 0 && <span className="text-green-600 text-[10px] ml-1">+{r.delta}</span>}
+                  {r.delta < 0 && <span className="text-red-600 text-[10px] ml-1">{r.delta}</span>}
                 </td>
               </tr>
             );
@@ -1478,6 +1479,11 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
       return g.isLocked || g.isManuallyLocked || pastKickoff;
     })
     .sort((a, b) => a.order - b.order);
+  // Commissioner can also flip games that already have a result. That choice
+  // stays in this browser; the stored result is left alone.
+  const editableGames = (
+    includeUnlocked ? games : pendingGames
+  ).slice().sort((a, b) => a.order - b.order);
 
   const picksByGame = new Map<string, schema.PickDoc[]>();
   picks.forEach((p) => {
@@ -1494,12 +1500,23 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
   };
 
   const extraByPlayer = new Map<string, number>();
-  pendingGames.forEach((g) => {
+  const addExtra = (playerId: string, pts: number) => {
+    if (!pts) return;
+    extraByPlayer.set(playerId, (extraByPlayer.get(playerId) || 0) + pts);
+  };
+  editableGames.forEach((g) => {
     const winner = chosen[g.id];
     if (!winner) return;
+    const actual = g.result?.winner;
+    // Leaving a final game on its real winner changes nothing. The points
+    // are already in the "now" column.
+    if (actual && winner === actual) return;
+    if (actual && actual !== "TIE") {
+      (picksByGame.get(g.id) || []).forEach((p) => addExtra(p.playerId, -(p.pointsAwarded || 0)));
+    }
     const pts = pointsIfWins(g, winner);
     (picksByGame.get(g.id) || []).forEach((p) => {
-      if (p.pickedTeam === winner) extraByPlayer.set(p.playerId, (extraByPlayer.get(p.playerId) || 0) + pts);
+      if (p.pickedTeam === winner) addExtra(p.playerId, pts);
     });
   });
 
@@ -1524,7 +1541,10 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
       }))
   );
 
-  const pickedCount = pendingGames.filter((g) => chosen[g.id]).length;
+  const pickedCount = editableGames.filter((g) => {
+    const winner = chosen[g.id];
+    return !!winner && winner !== g.result?.winner;
+  }).length;
 
   const pendingKey = pendingGames.map((g) => g.id).join(",");
   const stillInIt = useMemo(() => {
@@ -1618,7 +1638,7 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
       <h2 className="text-2xl font-bold mb-1">{includeUnlocked ? "Commissioner What If?" : "What If?"}</h2>
       <p className="text-sm text-gray-600 mb-4">
         {includeUnlocked
-          ? "Private to you: every game that isn't final, including ones that haven't locked, using everyone's picks entered so far. Nothing is saved."
+          ? "Private to you: flip any game, including ones that are already final. Nothing is saved."
           : "Pick a winner for any game that's locked but not final to see where everyone would land. Just for you — nothing is saved."}
       </p>
       {loading || loadingPicks ? (
@@ -1648,7 +1668,7 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
           <div className={!includeUnlocked && showWeekMatrix ? "self-stretch flex flex-col" : ""}>
           <div className="border rounded bg-white overflow-hidden shrink-0">
             <div className="bg-gray-100 px-2 py-1.5 text-xs font-bold flex items-center justify-between">
-              <span>{includeUnlocked ? "Games not final" : "Locked games"}</span>
+              <span>{includeUnlocked ? "All games" : "Locked games"}</span>
               {pickedCount > 0 && (
                 <button
                   onClick={() => {
@@ -1661,18 +1681,22 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
                 </button>
               )}
             </div>
-            {pendingGames.length === 0 ? (
+            {editableGames.length === 0 ? (
               <p className="p-3 text-xs text-gray-500">
                 {includeUnlocked
-                  ? "Every game this week is final."
+                  ? "No games this week."
                   : "No games are in progress right now. Games show up here once they lock at kickoff, until they go final."}
               </p>
             ) : (
               <div className="divide-y">
-                {pendingGames.map((g) => (
+                {editableGames.map((g) => (
                   <div key={g.id} className="p-2">
                     <div className="text-[10px] text-gray-500 mb-1 text-center">
-                      {g.live
+                      {g.result
+                        ? chosen[g.id] && chosen[g.id] !== g.result.winner
+                          ? `What if · ${chosen[g.id]} (final was ${g.result.winner === "TIE" ? "a tie" : g.result.winner})`
+                          : `Final · ${g.result.winner === "TIE" ? "Tie" : g.result.winner}`
+                        : g.live
                         ? `Live · ${g.awayTeam} ${g.live.awayScore}–${g.live.homeScore} ${g.homeTeam}${
                             g.live.detail ? ` · ${g.live.detail}` : ""
                           }`
