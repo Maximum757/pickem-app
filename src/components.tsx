@@ -1609,19 +1609,14 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
   ).length;
 
   const { snf, mnf } = primetimeGames(games);
-  // The grid needs both primetime picks. Everyone can see those once Sunday
-  // night kicks off (that lock also opens Monday). The commissioner can see
-  // them earlier, so the grid comes up for him as soon as the rest of the
-  // slate is final instead of waiting out the last minutes before kickoff.
+  // The commissioner can read every pick, so his What If pages keep the
+  // Sunday-Monday grid up whenever both games are still on the slate.
+  // Everyone else sees it once Sunday night kicks off, which is when those
+  // picks become public.
   const snfHasLocked =
     !!snf && (snf.isLocked || !!snf.isManuallyLocked || isPastLock(snf, games, now));
-  const restOfSlateFinal =
-    !!snf &&
-    !!mnf &&
-    games.every((g) => g.id === snf.id || g.id === mnf.id || !!g.result);
-  const canSeePrimetimePicks = includeUnlocked || isCommissioner || snfHasLocked;
   const showWeekMatrix =
-    !!snf && !!mnf && !mnf.result && canSeePrimetimePicks && (snfHasLocked || restOfSlateFinal);
+    !!snf && !!mnf && !mnf.result && (includeUnlocked || isCommissioner || snfHasLocked);
 
   // Clicking a player fills every open game with that player's own pick, so
   // they can see where a win-out would leave them. Clicking them again clears it.
@@ -1673,7 +1668,7 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
             onFollow={followPlayer}
           />
 
-          <div className={!includeUnlocked && showWeekMatrix ? "self-stretch flex flex-col" : ""}>
+          <div className={showWeekMatrix ? "self-stretch flex flex-col" : ""}>
           <div className="border rounded bg-white overflow-hidden shrink-0">
             <div className="bg-gray-100 px-2 py-1.5 text-xs font-bold flex items-center justify-between">
               <span>{includeUnlocked ? "All games" : "Locked games"}</span>
@@ -1748,7 +1743,7 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
               </div>
             )}
           </div>
-          {!includeUnlocked && showWeekMatrix && snf && mnf && (
+          {showWeekMatrix && snf && mnf && (
             <WeekWinnerMatrix
               snf={snf}
               mnf={mnf}
