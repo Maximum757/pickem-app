@@ -1609,11 +1609,19 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
   ).length;
 
   const { snf, mnf } = primetimeGames(games);
-  // Sunday night locking also locks Monday night, so both games' picks are
-  // public at that moment. Show the grid then, until Monday night is final.
+  // The grid needs both primetime picks. Everyone can see those once Sunday
+  // night kicks off (that lock also opens Monday). The commissioner can see
+  // them earlier, so the grid comes up for him as soon as the rest of the
+  // slate is final instead of waiting out the last minutes before kickoff.
   const snfHasLocked =
     !!snf && (snf.isLocked || !!snf.isManuallyLocked || isPastLock(snf, games, now));
-  const showWeekMatrix = !!snf && !!mnf && !mnf.result && snfHasLocked;
+  const restOfSlateFinal =
+    !!snf &&
+    !!mnf &&
+    games.every((g) => g.id === snf.id || g.id === mnf.id || !!g.result);
+  const canSeePrimetimePicks = includeUnlocked || isCommissioner || snfHasLocked;
+  const showWeekMatrix =
+    !!snf && !!mnf && !mnf.result && canSeePrimetimePicks && (snfHasLocked || restOfSlateFinal);
 
   // Clicking a player fills every open game with that player's own pick, so
   // they can see where a win-out would leave them. Clicking them again clears it.
