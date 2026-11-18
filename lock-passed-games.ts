@@ -14,8 +14,9 @@
  * Ties are a wash: the result is saved with winner/loser "TIE", so no pick
  * matches and nobody gets points for that game.
  *
- * Existing results are never overwritten. Wrong auto-result → Commissioner
- * Dashboard "Wrong? Fix it."
+ * A finished scoreboard is the check on a tapped winner. If the tap does
+ * not match the final, this replaces it and re-scores. "Wrong? Fix it"
+ * sets manualOverride so that one sticks when the scoreboard itself is off.
  *
  * Run:
  *   npm run lock:passed-games
@@ -195,6 +196,106 @@ async function writePickCounts(gameId: string, picks: FirebaseFirestore.QueryDoc
 }
 
 type GameDelta = { playerId: string; points: number; correct: boolean };
+
+// The tapped winner lost. Replace it with the scoreboard winner and move
+// the points by the difference, so a game that was already scored is not
+// added a second time.
+async function correctStoredWinner(
+  gameId: string,
+  week: number,
+  season: number,
+  winner: string,
+  loser: string,
+  winnerScore: number,
+  loserScore: number,
+  multiplier: number
+) {
+  const leagueRef = db.collection("leagues").doc(LEAGUE_ID);
+  const gameRef = leagueRef.collection("games").doc(gameId);
+  await gameRef.update({
+    isLocked: true,
+    "result.winner": winner,
+    "result.loser": loser,
+    "result.winnerScore": winnerScore,
+    "result.loserScore": loserScore,
+    "result.resultEnteredAt": Timestamp.now(),
+    "result.resultEnteredBy": ESPN_ENTERED_BY,
+    "result.manualOverride": false,
+    live: FieldValue.delete(),
+  });
+
+  const picksSnap = await leagueRef.collection("picks").where("gameId", "==", gameId).get();
+  const picksByTeam = new Map<string, number>();
+  picksSnap.docs.forEach((d) => {
+    const team = d.data().pickedTeam as string;
+    picksByTeam.set(team, (picksByTeam.get(team) || 0) + 1);
+  });
+  const points = engine.scoreGame(
+    gameId,
+    { gameId, winner, loser, winnerScore: 0, loserScore: 0 },
+    picksByTeam,
+    multiplier || 1
+  );
+
+  const deltas = picksSnap.docs.map((pickDoc) => {
+    const data = pickDoc.data();
+    const correct = data.pickedTeam === winner;
+    const newPoints = correct ? points : 0;
+    const oldPoints = data.pointsAwarded || 0;
+    const oldCorrect = data.isCorrect === true ? 1 : 0;
+    return {
+      playerId: data.playerId as string,
+      points: newPoints - oldPoints,
+      correctDelta: (correct ? 1 : 0) - oldCorrect,
+      isCorrect: correct,
+      pointsAwarded: newPoints,
+      ref: pickDoc.ref,
+    };
+  });
+
+  if (deltas.length > 0) {
+    const batch = db.batch();
+    deltas.forEach((d) => {
+      batch.update(d.ref, {
+        isCorrect: d.isCorrect,
+        pointsAwarded: d.pointsAwarded,
+        visibleToAll: true,
+      });
+    });
+    await batch.commit();
+  }
+
+  const weekRef = leagueRef.collection("weeklyScores").doc(String(week));
+  const weekSnap = await weekRef.get();
+  if (weekSnap.exists) {
+    const scores = weekSnap.data()!.scores.map((s: any) => ({ ...s }));
+    const byId = new Map(scores.map((s: any) => [s.playerId as string, s]));
+    deltas.forEach((d) => {
+      const row = byId.get(d.playerId) as any;
+      if (!row) return;
+      row.pointsRaw = (row.pointsRaw || 0) + d.points;
+      row.pointsAfterMultiplier = (row.pointsAfterMultiplier || 0) + d.points;
+      row.gamesCorrect = (row.gamesCorrect || 0) + d.correctDelta;
+    });
+    await weekRef.update({ scores, scoredAt: Timestamp.now() });
+  }
+
+  const standingsRef = leagueRef.collection("standings").doc(String(season));
+  const standingsSnap = await standingsRef.get();
+  if (standingsSnap.exists) {
+    const standings = standingsSnap.data()!.standings.map((s: any) => ({ ...s }));
+    const byId = new Map(standings.map((s: any) => [s.playerId as string, s]));
+    deltas.forEach((d) => {
+      const row = byId.get(d.playerId) as any;
+      if (!row) return;
+      row.totalPoints = (row.totalPoints || 0) + d.points;
+      row.totalCorrect = (row.totalCorrect || 0) + d.correctDelta;
+    });
+    standings.sort((a: any, b: any) => b.totalPoints - a.totalPoints || b.totalCorrect - a.totalCorrect);
+    standings.forEach((s: any, i: number) => (s.rank = i + 1));
+    await standingsRef.update({ standings, lastUpdatedAt: Timestamp.now() });
+  }
+}
 
 async function scoreGameAndRefresh(
   gameId: string,
@@ -432,6 +533,7 @@ async function lockPassedGames() {
   let finalsEntered = 0;
   let scoresFilled = 0;
   let tiesEntered = 0;
+  let corrected = 0;
   const finalizedThisRun = new Set<string>();
   for (const doc of gamesSnap.docs) {
     const g = doc.data();
@@ -471,12 +573,28 @@ async function lockPassedGames() {
     const espnLoser = isTie ? TIE : homeWon ? fresh.awayTeam : fresh.homeTeam;
 
     if (fresh.result) {
+      const winner = fresh.result.winner as string;
+      const override = fresh.result.manualOverride === true;
+      if (!override && winner !== espnWinner) {
+        console.log(
+          `  Correcting ${fresh.awayTeam} @ ${fresh.homeTeam}: saved ${winner}, scoreboard ${espnWinner}`
+        );
+        await correctStoredWinner(
+          doc.id,
+          fresh.week,
+          season,
+          espnWinner,
+          espnLoser,
+          homeWon ? espn.homeScore : espn.awayScore,
+          homeWon ? espn.awayScore : espn.homeScore,
+          fresh.playoffMultiplier || 1
+        );
+        corrected++;
+        continue;
+      }
       const missingScores = (fresh.result.winnerScore || 0) === 0 && (fresh.result.loserScore || 0) === 0;
       if (!missingScores) continue;
-      const winner = fresh.result.winner;
       if (winner === TIE && !isTie) continue;
-      // A tapped winner is kept. Scores come from that team's side of the
-      // scoreboard, so the number under the name is that team's points.
       const winnerScore = winner === fresh.homeTeam ? espn.homeScore : espn.awayScore;
       const loserScore = winner === fresh.homeTeam ? espn.awayScore : espn.homeScore;
       console.log(
@@ -530,7 +648,8 @@ async function lockPassedGames() {
     toLock.length === 0 &&
     revealedWeeks === 0 &&
     finalsEntered === 0 &&
-    scoresFilled === 0
+    scoresFilled === 0 &&
+    corrected === 0
   ) {
     console.log("No games need locking or scoring.");
     return;
@@ -538,6 +657,7 @@ async function lockPassedGames() {
 
   console.log(
     `\nLocked ${toLock.length} game(s). Entered ${finalsEntered} final(s). ` +
+      `Corrected ${corrected} saved winner(s) to match the scoreboard. ` +
       `Filled scores on ${scoresFilled} existing result(s). ` +
       `Revealed tiebreaker guesses for ${revealedWeeks} week(s).` +
       (tiesEntered ? ` ${tiesEntered} of those finals were ties (nobody scores).` : "")

@@ -56,7 +56,14 @@ interface LeagueContextType {
   submitPicks: (picks: Array<{ gameId: string; pickedTeam: string }>) => Promise<void>;
   submitSinglePick: (gameId: string, pickedTeam: string) => Promise<void>;
   submitMyTiebreakerGuess: (guess: number) => Promise<void>;
-  enterGameResult: (gameId: string, winner: string, loser: string, winnerScore: number, loserScore: number) => Promise<void>;
+  enterGameResult: (
+    gameId: string,
+    winner: string,
+    loser: string,
+    winnerScore: number,
+    loserScore: number,
+    manualOverride?: boolean
+  ) => Promise<void>;
   scoreWeek: (week: number) => Promise<void>;
   setTiebreakerQuestion: (
     week: number,
@@ -413,7 +420,8 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
     winner: string,
     loser: string,
     winnerScore: number,
-    loserScore: number
+    loserScore: number,
+    manualOverride: boolean = false
   ) => {
     if (!leagueId) return;
     try {
@@ -431,7 +439,8 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
         winnerScore,
         loserScore,
         playerId || "",
-        playoffMultiplier
+        playoffMultiplier,
+        manualOverride
       );
       // Reload games AND standings — scoring now happens immediately as
       // part of entering the result (see scoreGameImmediately in
