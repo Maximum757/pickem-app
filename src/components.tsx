@@ -2326,6 +2326,7 @@ export function CommissionerDashboard() {
   const [savingResultGameId, setSavingResultGameId] = useState<string | null>(null);
   const [resultError, setResultError] = useState<string | null>(null);
   const [tiebreakerQ, setTiebreakerQ] = useState("");
+  const [editingTiebreakerQuestion, setEditingTiebreakerQuestion] = useState(false);
   const [tiebreakerAnswerDraft, setTiebreakerAnswerDraft] = useState("");
   const [tiebreakerSaveError, setTiebreakerSaveError] = useState<string | null>(null);
   const [tiebreakerRule, setTiebreakerRule] = useState<"closest" | "closest_without_going_over">(
@@ -2334,6 +2335,7 @@ export function CommissionerDashboard() {
 
   React.useEffect(() => {
     if (savedTiebreakerRule) setTiebreakerRule(savedTiebreakerRule);
+    setEditingTiebreakerQuestion(false);
   }, [currentWeek, savedTiebreakerRule]);
 
   React.useEffect(() => {
@@ -2473,9 +2475,16 @@ export function CommissionerDashboard() {
   };
 
   const handleSetTiebreakerQuestion = async () => {
-    if (!tiebreakerQ) return;
-    await setTiebreakerQuestion(currentWeek, tiebreakerQ, tiebreakerRule);
+    if (!tiebreakerQ.trim()) return;
+    await setTiebreakerQuestion(currentWeek, tiebreakerQ.trim(), tiebreakerRule);
     setTiebreakerQ("");
+    setEditingTiebreakerQuestion(false);
+  };
+
+  const startEditingTiebreakerQuestion = () => {
+    setTiebreakerQ(tiebreakerQuestion || "");
+    if (savedTiebreakerRule) setTiebreakerRule(savedTiebreakerRule);
+    setEditingTiebreakerQuestion(true);
   };
 
   const handleSetTiebreakerAnswer = async () => {
@@ -2768,51 +2777,78 @@ export function CommissionerDashboard() {
         </div>
 
         <div className="space-y-3 mb-4">
-          <p className="text-xs text-gray-600">
-            Set the question now — you don't need to know the correct answer yet.
-            Record that separately once the relevant game finishes.
-          </p>
-          {tiebreakerQuestion ? (
-            <p className="text-sm font-semibold">{tiebreakerQuestion}</p>
+          {tiebreakerQuestion && !editingTiebreakerQuestion ? (
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{tiebreakerQuestion}</p>
+                <p className="text-xs text-gray-600 mt-1">
+                  {savedTiebreakerRule === "closest_without_going_over"
+                    ? "Closest without going over"
+                    : "Closest"}
+                </p>
+              </div>
+              <button
+                onClick={startEditingTiebreakerQuestion}
+                disabled={tiebreakerLocked}
+                className="shrink-0 text-sm font-semibold px-3 py-1 rounded bg-white border hover:bg-gray-50 disabled:text-gray-400 disabled:hover:bg-white"
+              >
+                Edit
+              </button>
+            </div>
           ) : (
-            <p className="text-sm font-semibold text-amber-800">
-              No question is set for Week {currentWeek}.
-            </p>
+            <>
+              {!tiebreakerQuestion && (
+                <p className="text-xs text-gray-600">
+                  Set the question now. You don't need the correct answer yet.
+                </p>
+              )}
+              <div>
+                <label className="block text-sm font-medium mb-2">Question</label>
+                <input
+                  type="text"
+                  placeholder="e.g., Total combined points, Patriots @ Seahawks"
+                  value={tiebreakerQ}
+                  onChange={(e) => setTiebreakerQ(e.target.value)}
+                  disabled={tiebreakerLocked}
+                  className="w-full border p-2 rounded disabled:bg-gray-100"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Rule</label>
+                <select
+                  value={tiebreakerRule}
+                  onChange={(e) =>
+                    setTiebreakerRule(e.target.value as "closest" | "closest_without_going_over")
+                  }
+                  disabled={tiebreakerLocked}
+                  className="w-full border p-2 rounded disabled:bg-gray-100"
+                >
+                  <option value="closest">Closest</option>
+                  <option value="closest_without_going_over">Closest Without Going Over</option>
+                </select>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSetTiebreakerQuestion}
+                  disabled={tiebreakerLocked || !tiebreakerQ.trim()}
+                  className="flex-1 bg-yellow-500 hover:bg-yellow-600 disabled:bg-gray-300 text-white font-bold py-2 px-4 rounded"
+                >
+                  {tiebreakerQuestion ? "Save" : "Set Question"}
+                </button>
+                {tiebreakerQuestion && (
+                  <button
+                    onClick={() => {
+                      setEditingTiebreakerQuestion(false);
+                      setTiebreakerQ("");
+                    }}
+                    className="px-4 py-2 rounded bg-white border font-semibold text-sm"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </>
           )}
-          <div>
-            <label className="block text-sm font-medium mb-2">Question</label>
-            <input
-              type="text"
-              placeholder="e.g., Total combined points, Patriots @ Seahawks"
-              value={tiebreakerQ}
-              onChange={(e) => setTiebreakerQ(e.target.value)}
-              disabled={tiebreakerLocked}
-              className="w-full border p-2 rounded disabled:bg-gray-100"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2">Rule</label>
-            <select
-              value={tiebreakerRule}
-              onChange={(e) =>
-                setTiebreakerRule(e.target.value as "closest" | "closest_without_going_over")
-              }
-              disabled={tiebreakerLocked}
-              className="w-full border p-2 rounded disabled:bg-gray-100"
-            >
-              <option value="closest">Closest</option>
-              <option value="closest_without_going_over">Closest Without Going Over</option>
-            </select>
-          </div>
-
-          <button
-            onClick={handleSetTiebreakerQuestion}
-            disabled={tiebreakerLocked || !tiebreakerQ}
-            className="w-full bg-yellow-500 hover:bg-yellow-600 disabled:bg-gray-300 text-white font-bold py-2 px-4 rounded"
-          >
-            {tiebreakerQuestion ? "Update Question" : "Set Question"}
-          </button>
         </div>
 
         <div className="border-t pt-3 space-y-2">
