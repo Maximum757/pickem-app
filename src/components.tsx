@@ -4627,10 +4627,9 @@ export function TiebreakerRecordScreen() {
 
 type ViewType = "picks" | "mysummary" | "everyonespicks" | "progress" | "whatif" | "commishwhatif" | "standings" | "payouts" | "commissioner" | "summary" | "members" | "polls" | "dfl";
 
-// A blank on a locked game scores nothing, which would help someone finish
-// last. For this board each blank counts as the full 19 a game can pay,
-// and it does not also add whatever that game paid the people who picked.
-const DFL_MISSED_GAME_POINTS = 19;
+// A blank scores nothing, which would help someone finish last. On this
+// board a miss counts as the points that game paid the correct side, whichever
+// team was filled in. A fill-in marked late keeps that player's own result.
 
 type DflGame = {
   id: string;
@@ -4698,6 +4697,17 @@ export function DflScoreboardScreen() {
     return names;
   }, [players]);
 
+  const gamePaid = useMemo(() => {
+    const paid = new Map<string, number>();
+    const closedIds = new Set(closed.map((g) => g.id));
+    picks.forEach((p) => {
+      if (!closedIds.has(p.gameId) || p.week === 0) return;
+      const points = p.pointsAwarded || 0;
+      if (points > (paid.get(p.gameId) || 0)) paid.set(p.gameId, points);
+    });
+    return paid;
+  }, [closed, picks]);
+
   const board = useMemo(() => {
     const closedIds = new Set(closed.map((g) => g.id));
     const ownGames = new Map<string, Set<string>>();
@@ -4717,21 +4727,21 @@ export function DflScoreboardScreen() {
       .filter((p) => !p.removedFromLeague)
       .map((p) => {
         const own = ownGames.get(p.id) || new Set<string>();
-        const missed = closed.filter((g) => !own.has(g.id)).length;
-        const missPoints = missed * DFL_MISSED_GAME_POINTS;
+        const missedGames = closed.filter((g) => !own.has(g.id));
+        const missPoints = missedGames.reduce((sum, g) => sum + (gamePaid.get(g.id) || 0), 0);
         const season = seasonPts.get(p.id) || 0;
         return {
           id: p.id,
           name: p.name,
           season,
-          missed,
+          missed: missedGames.length,
           missPoints,
           total: season - (randomOutcome.get(p.id) || 0) + missPoints,
         };
       })
       .sort((a, b) => a.total - b.total || a.season - b.season || a.name.localeCompare(b.name));
     return { rows };
-  }, [closed, picks, players, standings]);
+  }, [closed, gamePaid, picks, players, standings]);
 
   const fillIns = useMemo(() => {
     const gameById = new Map(closed.map((g) => [g.id, g]));
@@ -4748,6 +4758,7 @@ export function DflScoreboardScreen() {
           playerName: nameById.get(p.playerId) || "Unknown",
           pickedTeam: p.pickedTeam,
           points: p.pointsAwarded || 0,
+          gamePaid: gamePaid.get(p.gameId) || 0,
           countsAs: p.dflCountsAs === "late" ? ("late" as const) : ("random" as const),
         };
       })
@@ -4758,7 +4769,7 @@ export function DflScoreboardScreen() {
           a.matchup.localeCompare(b.matchup) ||
           a.playerName.localeCompare(b.playerName)
       );
-  }, [closed, picks, nameById]);
+  }, [closed, gamePaid, picks, nameById]);
 
   const setTreatment = async (pickId: string, countsAs: "random" | "late") => {
     if (!leagueId) return;
@@ -4784,9 +4795,9 @@ export function DflScoreboardScreen() {
     <div className="p-4">
       <h2 className="text-2xl font-bold mb-1">DFL Scoreboard</h2>
       <p className="text-sm text-gray-600 mb-4 max-w-xl">
-        Lowest total is last place. A blank counts as {DFL_MISSED_GAME_POINTS} points. A fill-in
-        counts as a blank until you mark it Late, which means they got the pick in and it scores
-        like their own. This does not change the real standings. {closed.length} games are closed.
+        Lowest total is last place. A missed pick counts as the points that game paid, whichever
+        side was filled in. Mark it Late if they got the pick in, and it scores like their own.
+        This does not change the real standings. {closed.length} games are closed.
       </p>
       {loadError && <p className="text-sm text-red-600 mb-3">{loadError}</p>}
       <table className="border-collapse text-sm mb-8">
@@ -4816,8 +4827,8 @@ export function DflScoreboardScreen() {
 
       <h3 className="text-lg font-bold mb-1">Fill-ins</h3>
       <p className="text-sm text-gray-600 mb-3 max-w-xl">
-        {fillIns.length} picks you entered. Random keeps the {DFL_MISSED_GAME_POINTS}. Late means
-        they got it in.
+        {fillIns.length} picks you entered. Random gives them what that game paid. Late means they
+        got it in.
       </p>
       {fillIns.length === 0 ? (
         <p className="text-sm text-gray-500">No fill-ins on closed games.</p>
@@ -4837,8 +4848,7 @@ export function DflScoreboardScreen() {
                 <div className="flex items-center gap-2 px-3 py-1.5">
                   <span className="text-sm flex-1 min-w-0 truncate">{pick.playerName}</span>
                   <span className="text-xs text-gray-500 whitespace-nowrap">
-                    {pick.pickedTeam}
-                    {pick.points ? ` · ${pick.points} pts` : ""}
+                    {pick.pickedTeam} · game paid {pick.gamePaid}
                   </span>
                   <button
                     onClick={() => pick.countsAs !== "random" && setTreatment(pick.id, "random")}
