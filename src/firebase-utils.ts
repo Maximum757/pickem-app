@@ -1014,8 +1014,16 @@ export async function setWeeklyTiebreakerAnswer(
   answer: number
 ): Promise<void> {
   const tiebreakerRef = doc(db, `leagues/${leagueId}/weeklyTiebreakers/${week}`);
-  await updateDoc(tiebreakerRef, { answer });
-  await resolveTiebreakerWinner(leagueId, week);
+  // Merge so the result can be recorded even when the question doc was
+  // never created. updateDoc throws in that case and the answer is lost.
+  await setDoc(tiebreakerRef, { leagueId, week, answer }, { merge: true });
+  // The answer is already saved. Resolving who won reads every pick, and
+  // that follow-up must not undo a successful save.
+  try {
+    await resolveTiebreakerWinner(leagueId, week);
+  } catch (err) {
+    console.error("Tiebreaker answer saved, but the winner could not be resolved", err);
+  }
 }
 
 /**

@@ -493,12 +493,8 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
 
   const handleSetTiebreakerAnswer = async (week: number, answer: number) => {
     if (!leagueId) return;
-    try {
-      await firebaseUtils.setWeeklyTiebreakerAnswer(leagueId, week, answer);
-      if (week === currentWeek) setTiebreakerAnswerState(answer);
-    } catch (err) {
-      setError(`Failed to record tiebreaker answer: ${err}`);
-    }
+    await firebaseUtils.setWeeklyTiebreakerAnswer(leagueId, week, answer);
+    if (week === currentWeek) setTiebreakerAnswerState(answer);
   };
 
   const handleLockTiebreaker = async (week: number) => {

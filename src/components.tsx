@@ -2305,6 +2305,8 @@ export function CommissionerDashboard() {
     advanceToWeek,
     enterGameResult,
     tiebreakerQuestion,
+    tiebreakerAnswer,
+    tiebreakerRule: savedTiebreakerRule,
     tiebreakerLocked,
     setTiebreakerQuestion,
     setTiebreakerAnswer,
@@ -2325,9 +2327,20 @@ export function CommissionerDashboard() {
   const [resultError, setResultError] = useState<string | null>(null);
   const [tiebreakerQ, setTiebreakerQ] = useState("");
   const [tiebreakerAnswerDraft, setTiebreakerAnswerDraft] = useState("");
+  const [tiebreakerSaveError, setTiebreakerSaveError] = useState<string | null>(null);
   const [tiebreakerRule, setTiebreakerRule] = useState<"closest" | "closest_without_going_over">(
     "closest"
   );
+
+  React.useEffect(() => {
+    if (savedTiebreakerRule) setTiebreakerRule(savedTiebreakerRule);
+  }, [currentWeek, savedTiebreakerRule]);
+
+  React.useEffect(() => {
+    setTiebreakerAnswerDraft(
+      tiebreakerAnswer === null || tiebreakerAnswer === undefined ? "" : String(tiebreakerAnswer)
+    );
+  }, [currentWeek, tiebreakerAnswer]);
 
   // Who has/hasn't picked each game, and who has/hasn't entered the
   // tiebreaker — commissioner-only data (players list has emails for the
@@ -2466,9 +2479,13 @@ export function CommissionerDashboard() {
   };
 
   const handleSetTiebreakerAnswer = async () => {
-    if (!tiebreakerAnswerDraft) return;
-    await setTiebreakerAnswer(currentWeek, parseFloat(tiebreakerAnswerDraft));
-    setTiebreakerAnswerDraft("");
+    if (tiebreakerAnswerDraft.trim() === "" || Number.isNaN(parseFloat(tiebreakerAnswerDraft))) return;
+    setTiebreakerSaveError(null);
+    try {
+      await setTiebreakerAnswer(currentWeek, parseFloat(tiebreakerAnswerDraft));
+    } catch (err) {
+      setTiebreakerSaveError(`Could not save that answer: ${err}`);
+    }
   };
 
   const handleToggleLock = async () => {
@@ -2755,10 +2772,15 @@ export function CommissionerDashboard() {
             Set the question now — you don't need to know the correct answer yet.
             Record that separately once the relevant game finishes.
           </p>
+          {tiebreakerQuestion ? (
+            <p className="text-sm font-semibold">{tiebreakerQuestion}</p>
+          ) : (
+            <p className="text-sm font-semibold text-amber-800">
+              No question is set for Week {currentWeek}.
+            </p>
+          )}
           <div>
-            <label className="block text-sm font-medium mb-2">
-              Question {tiebreakerQuestion && <span className="font-normal text-gray-500">(current: "{tiebreakerQuestion}")</span>}
-            </label>
+            <label className="block text-sm font-medium mb-2">Question</label>
             <input
               type="text"
               placeholder="e.g., Total combined points, Patriots @ Seahawks"
@@ -2799,6 +2821,11 @@ export function CommissionerDashboard() {
             Fill this in once you actually know it — usually after the relevant game
             finishes. Shown to everyone on the picks screen once you save it.
           </p>
+          {tiebreakerAnswer !== null && tiebreakerAnswer !== undefined && (
+            <p className="text-sm font-semibold text-green-800">
+              Saved answer: {tiebreakerAnswer}
+            </p>
+          )}
           <div className="flex gap-2">
             <input
               type="number"
@@ -2809,12 +2836,13 @@ export function CommissionerDashboard() {
             />
             <button
               onClick={handleSetTiebreakerAnswer}
-              disabled={!tiebreakerAnswerDraft}
+              disabled={tiebreakerAnswerDraft.trim() === "" || Number.isNaN(parseFloat(tiebreakerAnswerDraft))}
               className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white font-semibold py-2 px-4 rounded text-sm"
             >
               Save
             </button>
           </div>
+          {tiebreakerSaveError && <p className="text-sm text-red-600">{tiebreakerSaveError}</p>}
         </div>
 
         <div className="border-t pt-3 mt-3">
@@ -4016,7 +4044,7 @@ export function WeeklySummary() {
   const [nextWeekPickByGame, setNextWeekPickByGame] = useState<{ [gameId: string]: string }>({});
   const [weekTiebreaker, setWeekTiebreaker] = useState<schema.WeeklyTiebreakerDoc | null>(null);
   const [weekTbGuesses, setWeekTbGuesses] = useState<schema.TiebreakerGuessDoc[]>([]);
-  const [loadingSummary, setLoadingSummary] = useState(false);
+  const [loadingSummary, setLoadingSummary] = useState(true);
   const nextWeek = summaryWeek + 1;
 
   const recapDefault = defaultRecapWeek(
@@ -4068,6 +4096,7 @@ export function WeeklySummary() {
     if (!leagueId) return;
     setLoadingSummary(true);
     (async () => {
+      try {
       const [gamesData, picksData, upcomingGames, myUpcomingPicks, tb, guesses] = await Promise.all([
         firebaseUtils.getGamesForWeek(leagueId, summaryWeek),
         firebaseUtils.getAllPicksForWeek(leagueId, summaryWeek),
@@ -4100,7 +4129,11 @@ export function WeeklySummary() {
       setNextWeekPickByGame(upcomingMap);
       setWeekTiebreaker(tb);
       setWeekTbGuesses(guesses);
+    } catch (err) {
+      console.error("Failed to load the weekly recap", err);
+    } finally {
       setLoadingSummary(false);
+    }
     })();
   }, [leagueId, playerId, summaryWeek, nextWeek]);
 
@@ -4206,12 +4239,16 @@ export function WeeklySummary() {
         <div className="text-sm text-gray-600 mb-6">Loading...</div>
       ) : (
         <>
-          {weekTiebreaker?.question && (
+          {weekTiebreaker?.question ? (
             <p className="text-sm text-gray-700 mb-2">
               {weekTiebreaker.question}
               {answer !== null && (
                 <span className="font-semibold"> · Answer {formatTiebreakerNumber(answer)}</span>
               )}
+            </p>
+          ) : (
+            <p className="text-sm font-semibold text-amber-800 mb-2">
+              No tiebreaker question is set for Week {summaryWeek}.
             </p>
           )}
 
