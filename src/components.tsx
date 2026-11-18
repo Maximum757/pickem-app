@@ -4668,21 +4668,36 @@ export function DflScoreboardScreen() {
             g.week > 0 &&
             (!!g.result || g.isLocked || !!g.isManuallyLocked || isPastLock(g, lockable, now))
         );
-        const picked = new Set(picks.map((p) => `${p.playerId}_${p.gameId}`));
+        const closedIds = new Set(closed.map((g) => g.id));
+        // A pick the commissioner filled in is marked isWildcard. That is
+        // still a forgotten game: the player did not make it.
+        const ownGames = new Map<string, Set<string>>();
+        const filledInOutcome = new Map<string, number>();
+        picks.forEach((p) => {
+          if (!closedIds.has(p.gameId)) return;
+          if (p.isWildcard) {
+            filledInOutcome.set(p.playerId, (filledInOutcome.get(p.playerId) || 0) + (p.pointsAwarded || 0));
+            return;
+          }
+          if (!ownGames.has(p.playerId)) ownGames.set(p.playerId, new Set());
+          ownGames.get(p.playerId)!.add(p.gameId);
+        });
         const seasonPts = new Map(standings.map((s) => [s.playerId, s.totalPoints]));
         const built = players
           .filter((p) => !p.removedFromLeague)
           .map((p) => {
-            const missed = closed.filter((g) => !picked.has(`${p.id}_${g.id}`)).length;
+            const own = ownGames.get(p.id) || new Set<string>();
+            const missed = closed.filter((g) => !own.has(g.id)).length;
             const missPoints = missed * DFL_MISSED_GAME_POINTS;
             const season = seasonPts.get(p.id) || 0;
+            const outcomeOnFilledIn = filledInOutcome.get(p.id) || 0;
             return {
               id: p.id,
               name: p.name,
               season,
               missed,
               missPoints,
-              total: season + missPoints,
+              total: season - outcomeOnFilledIn + missPoints,
             };
           })
           .sort((a, b) => a.total - b.total || a.season - b.season || a.name.localeCompare(b.name));
@@ -4705,9 +4720,10 @@ export function DflScoreboardScreen() {
     <div className="p-4">
       <h2 className="text-2xl font-bold mb-1">DFL Scoreboard</h2>
       <p className="text-sm text-gray-600 mb-4 max-w-xl">
-        Lowest total is last place. A locked game with no pick counts as {DFL_MISSED_GAME_POINTS}{" "}
-        points. That charge does not also add what the game paid, and it stays off the real
-        standings. {closedGames} games are closed.
+        Lowest total is last place. A locked game the player did not pick counts as{" "}
+        {DFL_MISSED_GAME_POINTS} points, including one you filled in for them. The points that
+        fill-in earned on the real standings are taken back out, and this board does not change
+        those standings. {closedGames} games are closed.
       </p>
       {loadError ? (
         <p className="text-sm text-red-600">{loadError}</p>
