@@ -4632,14 +4632,21 @@ type ViewType = "picks" | "mysummary" | "everyonespicks" | "progress" | "whatif"
 // and it does not also add whatever that game paid the people who picked.
 const DFL_MISSED_GAME_POINTS = 19;
 
+type DflGame = {
+  id: string;
+  week: number;
+  order: number;
+  awayTeam: string;
+  homeTeam: string;
+};
+
 export function DflScoreboardScreen() {
   const { leagueId, playerId, players, standings, loading } = useLeague();
-  const [rows, setRows] = useState<
-    { id: string; name: string; season: number; missed: number; missPoints: number; total: number }[]
-  >([]);
-  const [closedGames, setClosedGames] = useState(0);
+  const [picks, setPicks] = useState<schema.PickDoc[]>([]);
+  const [closed, setClosed] = useState<DflGame[]>([]);
   const [loadingBoard, setLoadingBoard] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [savingPickId, setSavingPickId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!leagueId) return;
@@ -4648,7 +4655,7 @@ export function DflScoreboardScreen() {
       setLoadingBoard(true);
       setLoadError(null);
       try {
-        const [games, picks] = await Promise.all([
+        const [games, loadedPicks] = await Promise.all([
           firebaseUtils.getAllGamesForLeague(leagueId),
           firebaseUtils.getAllPicksForLeague(leagueId),
         ]);
@@ -4662,47 +4669,18 @@ export function DflScoreboardScreen() {
           result: g.result,
           id: g.id,
           week: g.week,
+          order: g.order,
+          awayTeam: g.awayTeam,
+          homeTeam: g.homeTeam,
         }));
-        const closed = lockable.filter(
-          (g) =>
-            g.week > 0 &&
-            (!!g.result || g.isLocked || !!g.isManuallyLocked || isPastLock(g, lockable, now))
+        setClosed(
+          lockable.filter(
+            (g) =>
+              g.week > 0 &&
+              (!!g.result || g.isLocked || !!g.isManuallyLocked || isPastLock(g, lockable, now))
+          )
         );
-        const closedIds = new Set(closed.map((g) => g.id));
-        // A pick the commissioner filled in is marked isWildcard. That is
-        // still a forgotten game: the player did not make it.
-        const ownGames = new Map<string, Set<string>>();
-        const filledInOutcome = new Map<string, number>();
-        picks.forEach((p) => {
-          if (!closedIds.has(p.gameId)) return;
-          if (p.isWildcard) {
-            filledInOutcome.set(p.playerId, (filledInOutcome.get(p.playerId) || 0) + (p.pointsAwarded || 0));
-            return;
-          }
-          if (!ownGames.has(p.playerId)) ownGames.set(p.playerId, new Set());
-          ownGames.get(p.playerId)!.add(p.gameId);
-        });
-        const seasonPts = new Map(standings.map((s) => [s.playerId, s.totalPoints]));
-        const built = players
-          .filter((p) => !p.removedFromLeague)
-          .map((p) => {
-            const own = ownGames.get(p.id) || new Set<string>();
-            const missed = closed.filter((g) => !own.has(g.id)).length;
-            const missPoints = missed * DFL_MISSED_GAME_POINTS;
-            const season = seasonPts.get(p.id) || 0;
-            const outcomeOnFilledIn = filledInOutcome.get(p.id) || 0;
-            return {
-              id: p.id,
-              name: p.name,
-              season,
-              missed,
-              missPoints,
-              total: season - outcomeOnFilledIn + missPoints,
-            };
-          })
-          .sort((a, b) => a.total - b.total || a.season - b.season || a.name.localeCompare(b.name));
-        setRows(built);
-        setClosedGames(closed.length);
+        setPicks(loadedPicks);
       } catch (err) {
         if (!cancelled) setLoadError(`Failed to load the DFL board: ${err}`);
       } finally {
@@ -4712,7 +4690,93 @@ export function DflScoreboardScreen() {
     return () => {
       cancelled = true;
     };
-  }, [leagueId, players, standings]);
+  }, [leagueId]);
+
+  const nameById = useMemo(() => {
+    const names = new Map<string, string>();
+    players.forEach((p) => names.set(p.id, p.name.trim()));
+    return names;
+  }, [players]);
+
+  const board = useMemo(() => {
+    const closedIds = new Set(closed.map((g) => g.id));
+    const ownGames = new Map<string, Set<string>>();
+    const randomOutcome = new Map<string, number>();
+    picks.forEach((p) => {
+      if (!closedIds.has(p.gameId) || p.week === 0) return;
+      const countsAsOwn = !p.isWildcard || p.dflCountsAs === "late";
+      if (countsAsOwn) {
+        if (!ownGames.has(p.playerId)) ownGames.set(p.playerId, new Set());
+        ownGames.get(p.playerId)!.add(p.gameId);
+        return;
+      }
+      randomOutcome.set(p.playerId, (randomOutcome.get(p.playerId) || 0) + (p.pointsAwarded || 0));
+    });
+    const seasonPts = new Map(standings.map((s) => [s.playerId, s.totalPoints]));
+    const rows = players
+      .filter((p) => !p.removedFromLeague)
+      .map((p) => {
+        const own = ownGames.get(p.id) || new Set<string>();
+        const missed = closed.filter((g) => !own.has(g.id)).length;
+        const missPoints = missed * DFL_MISSED_GAME_POINTS;
+        const season = seasonPts.get(p.id) || 0;
+        return {
+          id: p.id,
+          name: p.name,
+          season,
+          missed,
+          missPoints,
+          total: season - (randomOutcome.get(p.id) || 0) + missPoints,
+        };
+      })
+      .sort((a, b) => a.total - b.total || a.season - b.season || a.name.localeCompare(b.name));
+    return { rows };
+  }, [closed, picks, players, standings]);
+
+  const fillIns = useMemo(() => {
+    const gameById = new Map(closed.map((g) => [g.id, g]));
+    return picks
+      .filter((p) => p.isWildcard && p.week > 0 && gameById.has(p.gameId))
+      .map((p) => {
+        const game = gameById.get(p.gameId)!;
+        return {
+          id: p.id,
+          week: p.week,
+          order: game.order,
+          matchup: `${game.awayTeam} @ ${game.homeTeam}`,
+          playerId: p.playerId,
+          playerName: nameById.get(p.playerId) || "Unknown",
+          pickedTeam: p.pickedTeam,
+          points: p.pointsAwarded || 0,
+          countsAs: p.dflCountsAs === "late" ? ("late" as const) : ("random" as const),
+        };
+      })
+      .sort(
+        (a, b) =>
+          a.week - b.week ||
+          a.order - b.order ||
+          a.matchup.localeCompare(b.matchup) ||
+          a.playerName.localeCompare(b.playerName)
+      );
+  }, [closed, picks, nameById]);
+
+  const setTreatment = async (pickId: string, countsAs: "random" | "late") => {
+    if (!leagueId) return;
+    const previous = picks;
+    setPicks((current) =>
+      current.map((p) => (p.id === pickId ? { ...p, dflCountsAs: countsAs } : p))
+    );
+    setSavingPickId(pickId);
+    setLoadError(null);
+    try {
+      await firebaseUtils.setPickDflTreatment(leagueId, pickId, countsAs);
+    } catch (err) {
+      setPicks(previous);
+      setLoadError(`Could not save that: ${err}`);
+    } finally {
+      setSavingPickId((current) => (current === pickId ? null : current));
+    }
+  };
 
   if (loading || loadingBoard) return <div className="p-4">Loading...</div>;
 
@@ -4720,41 +4784,89 @@ export function DflScoreboardScreen() {
     <div className="p-4">
       <h2 className="text-2xl font-bold mb-1">DFL Scoreboard</h2>
       <p className="text-sm text-gray-600 mb-4 max-w-xl">
-        Lowest total is last place. A locked game the player did not pick counts as{" "}
-        {DFL_MISSED_GAME_POINTS} points, including one you filled in for them. The points that
-        fill-in earned on the real standings are taken back out, and this board does not change
-        those standings. {closedGames} games are closed.
+        Lowest total is last place. A blank counts as {DFL_MISSED_GAME_POINTS} points. A fill-in
+        counts as a blank until you mark it Late, which means they got the pick in and it scores
+        like their own. This does not change the real standings. {closed.length} games are closed.
       </p>
-      {loadError ? (
-        <p className="text-sm text-red-600">{loadError}</p>
-      ) : (
-        <table className="border-collapse text-sm">
-          <thead>
-            <tr className="border-b-2 text-left">
-              <th className="py-2 pr-3">#</th>
-              <th className="py-2 pr-4">Player</th>
-              <th className="py-2 pr-4 text-right">Season</th>
-              <th className="py-2 pr-4 text-right">Missed</th>
-              <th className="py-2 pr-4 text-right">Miss pts</th>
-              <th className="py-2 text-right">DFL total</th>
+      {loadError && <p className="text-sm text-red-600 mb-3">{loadError}</p>}
+      <table className="border-collapse text-sm mb-8">
+        <thead>
+          <tr className="border-b-2 text-left">
+            <th className="py-2 pr-3">#</th>
+            <th className="py-2 pr-4">Player</th>
+            <th className="py-2 pr-4 text-right">Season</th>
+            <th className="py-2 pr-4 text-right">Missed</th>
+            <th className="py-2 pr-4 text-right">Miss pts</th>
+            <th className="py-2 text-right">DFL total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {board.rows.map((row, i) => (
+            <tr key={row.id} className={`border-b ${row.id === playerId ? "bg-blue-50" : ""}`}>
+              <td className="py-1.5 pr-3 text-gray-500">{i + 1}</td>
+              <td className="py-1.5 pr-4 font-medium">{row.name.trim()}</td>
+              <td className="py-1.5 pr-4 text-right">{row.season}</td>
+              <td className="py-1.5 pr-4 text-right">{row.missed}</td>
+              <td className="py-1.5 pr-4 text-right">{row.missPoints}</td>
+              <td className="py-1.5 text-right font-semibold">{row.total}</td>
             </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, i) => (
-              <tr
-                key={row.id}
-                className={`border-b ${row.id === playerId ? "bg-blue-50" : ""}`}
-              >
-                <td className="py-1.5 pr-3 text-gray-500">{i + 1}</td>
-                <td className="py-1.5 pr-4 font-medium">{row.name.trim()}</td>
-                <td className="py-1.5 pr-4 text-right">{row.season}</td>
-                <td className="py-1.5 pr-4 text-right">{row.missed}</td>
-                <td className="py-1.5 pr-4 text-right">{row.missPoints}</td>
-                <td className="py-1.5 text-right font-semibold">{row.total}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          ))}
+        </tbody>
+      </table>
+
+      <h3 className="text-lg font-bold mb-1">Fill-ins</h3>
+      <p className="text-sm text-gray-600 mb-3 max-w-xl">
+        {fillIns.length} picks you entered. Random keeps the {DFL_MISSED_GAME_POINTS}. Late means
+        they got it in.
+      </p>
+      {fillIns.length === 0 ? (
+        <p className="text-sm text-gray-500">No fill-ins on closed games.</p>
+      ) : (
+        <div className="max-w-xl border rounded bg-white divide-y">
+          {fillIns.map((pick, index) => {
+            const previous = fillIns[index - 1];
+            const showGame = !previous || previous.week !== pick.week || previous.matchup !== pick.matchup;
+            const saving = savingPickId === pick.id;
+            return (
+              <div key={pick.id}>
+                {showGame && (
+                  <div className="bg-gray-100 px-3 py-1.5 text-xs font-bold">
+                    Week {pick.week} · {pick.matchup}
+                  </div>
+                )}
+                <div className="flex items-center gap-2 px-3 py-1.5">
+                  <span className="text-sm flex-1 min-w-0 truncate">{pick.playerName}</span>
+                  <span className="text-xs text-gray-500 whitespace-nowrap">
+                    {pick.pickedTeam}
+                    {pick.points ? ` · ${pick.points} pts` : ""}
+                  </span>
+                  <button
+                    onClick={() => pick.countsAs !== "random" && setTreatment(pick.id, "random")}
+                    disabled={saving}
+                    className={`text-xs font-semibold px-2 py-1 rounded ${
+                      pick.countsAs === "random"
+                        ? "bg-amber-200 text-amber-950"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    }`}
+                  >
+                    Random
+                  </button>
+                  <button
+                    onClick={() => pick.countsAs !== "late" && setTreatment(pick.id, "late")}
+                    disabled={saving}
+                    className={`text-xs font-semibold px-2 py-1 rounded ${
+                      pick.countsAs === "late"
+                        ? "bg-blue-500 text-white"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    }`}
+                  >
+                    Late
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

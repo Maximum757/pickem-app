@@ -180,6 +180,9 @@ export interface PickDoc {
   week: number;
   pickedTeam: string; // Team abbreviation
   isWildcard: boolean; // True if auto-filled by wildcard picker
+  // DFL board only. "late" means the player got this pick in late, so it
+  // scores like their own. Absent or "random" means they never picked.
+  dflCountsAs?: "random" | "late";
   submittedAt: Timestamp;
   isCorrect?: boolean; // Filled after result entered
   pointsAwarded?: number; // Filled after result + scoring

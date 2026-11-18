@@ -1409,6 +1409,15 @@ export async function restorePlayerToLeague(leagueId: string, playerId: string):
  * made themselves only swaps the team — it stays their pick. If the game
  * already has a result, scoring runs again so the new team counts.
  */
+/** How a commissioner fill-in counts on the DFL board. Does not rescore the game. */
+export async function setPickDflTreatment(
+  leagueId: string,
+  pickId: string,
+  countsAs: "random" | "late"
+): Promise<void> {
+  await updateDoc(doc(db, `leagues/${leagueId}/picks`, pickId), { dflCountsAs: countsAs });
+}
+
 export async function assignMissedPick(
   leagueId: string,
   playerId: string,
