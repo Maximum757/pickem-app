@@ -4625,7 +4625,124 @@ export function TiebreakerRecordScreen() {
 // MAIN APP COMPONENT
 // ============================================================================
 
-type ViewType = "picks" | "mysummary" | "everyonespicks" | "progress" | "whatif" | "commishwhatif" | "standings" | "payouts" | "commissioner" | "summary" | "members" | "polls";
+type ViewType = "picks" | "mysummary" | "everyonespicks" | "progress" | "whatif" | "commishwhatif" | "standings" | "payouts" | "commissioner" | "summary" | "members" | "polls" | "dfl";
+
+// A blank on a locked game scores nothing, which would help someone finish
+// last. For this board each blank counts as the full 19 a game can pay,
+// and it does not also add whatever that game paid the people who picked.
+const DFL_MISSED_GAME_POINTS = 19;
+
+export function DflScoreboardScreen() {
+  const { leagueId, playerId, players, standings, loading } = useLeague();
+  const [rows, setRows] = useState<
+    { id: string; name: string; season: number; missed: number; missPoints: number; total: number }[]
+  >([]);
+  const [closedGames, setClosedGames] = useState(0);
+  const [loadingBoard, setLoadingBoard] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!leagueId) return;
+    let cancelled = false;
+    (async () => {
+      setLoadingBoard(true);
+      setLoadError(null);
+      try {
+        const [games, picks] = await Promise.all([
+          firebaseUtils.getAllGamesForLeague(leagueId),
+          firebaseUtils.getAllPicksForLeague(leagueId),
+        ]);
+        if (cancelled) return;
+        const now = new Date();
+        const lockable = games.map((g) => ({
+          gameTime: g.gameTime ? g.gameTime.toDate() : null,
+          timeTBD: g.timeTBD,
+          isLocked: g.isLocked,
+          isManuallyLocked: g.isManuallyLocked,
+          result: g.result,
+          id: g.id,
+          week: g.week,
+        }));
+        const closed = lockable.filter(
+          (g) =>
+            g.week > 0 &&
+            (!!g.result || g.isLocked || !!g.isManuallyLocked || isPastLock(g, lockable, now))
+        );
+        const picked = new Set(picks.map((p) => `${p.playerId}_${p.gameId}`));
+        const seasonPts = new Map(standings.map((s) => [s.playerId, s.totalPoints]));
+        const built = players
+          .filter((p) => !p.removedFromLeague)
+          .map((p) => {
+            const missed = closed.filter((g) => !picked.has(`${p.id}_${g.id}`)).length;
+            const missPoints = missed * DFL_MISSED_GAME_POINTS;
+            const season = seasonPts.get(p.id) || 0;
+            return {
+              id: p.id,
+              name: p.name,
+              season,
+              missed,
+              missPoints,
+              total: season + missPoints,
+            };
+          })
+          .sort((a, b) => a.total - b.total || a.season - b.season || a.name.localeCompare(b.name));
+        setRows(built);
+        setClosedGames(closed.length);
+      } catch (err) {
+        if (!cancelled) setLoadError(`Failed to load the DFL board: ${err}`);
+      } finally {
+        if (!cancelled) setLoadingBoard(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [leagueId, players, standings]);
+
+  if (loading || loadingBoard) return <div className="p-4">Loading...</div>;
+
+  return (
+    <div className="p-4">
+      <h2 className="text-2xl font-bold mb-1">DFL Scoreboard</h2>
+      <p className="text-sm text-gray-600 mb-4 max-w-xl">
+        Lowest total is last place. A locked game with no pick counts as {DFL_MISSED_GAME_POINTS}{" "}
+        points. That charge does not also add what the game paid, and it stays off the real
+        standings. {closedGames} games are closed.
+      </p>
+      {loadError ? (
+        <p className="text-sm text-red-600">{loadError}</p>
+      ) : (
+        <table className="border-collapse text-sm">
+          <thead>
+            <tr className="border-b-2 text-left">
+              <th className="py-2 pr-3">#</th>
+              <th className="py-2 pr-4">Player</th>
+              <th className="py-2 pr-4 text-right">Season</th>
+              <th className="py-2 pr-4 text-right">Missed</th>
+              <th className="py-2 pr-4 text-right">Miss pts</th>
+              <th className="py-2 text-right">DFL total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr
+                key={row.id}
+                className={`border-b ${row.id === playerId ? "bg-blue-50" : ""}`}
+              >
+                <td className="py-1.5 pr-3 text-gray-500">{i + 1}</td>
+                <td className="py-1.5 pr-4 font-medium">{row.name.trim()}</td>
+                <td className="py-1.5 pr-4 text-right">{row.season}</td>
+                <td className="py-1.5 pr-4 text-right">{row.missed}</td>
+                <td className="py-1.5 pr-4 text-right">{row.missPoints}</td>
+                <td className="py-1.5 text-right font-semibold">{row.total}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
 
 // ============================================================================
 // MEMBERS SCREEN - Roster with contact info and dues tracking (commissioner only)
@@ -5391,6 +5508,18 @@ export function App() {
                 Commish What If?
               </button>
             )}
+            {isCommissioner && (
+              <button
+                onClick={() => setView("dfl")}
+                className={`py-2 px-4 rounded font-medium transition ${
+                  view === "dfl"
+                    ? "bg-blue-500 text-white"
+                    : "bg-gray-200 hover:bg-gray-300"
+                }`}
+              >
+                DFL
+              </button>
+            )}
           </div>
           )}
         </div>
@@ -5409,6 +5538,7 @@ export function App() {
         {!loading && view === "members" && isCommissioner && <MembersScreen />}
         {!loading && view === "whatif" && <WhatIfScreen />}
         {!loading && view === "commishwhatif" && isCommissioner && <WhatIfScreen includeUnlocked />}
+        {!loading && view === "dfl" && isCommissioner && <DflScoreboardScreen />}
         {!loading && view === "polls" && <PollsScreen />}
         {!loading && view === "progress" && <WeekProgressScreen />}
       </div>
