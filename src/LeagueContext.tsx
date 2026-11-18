@@ -436,7 +436,14 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
       // Reload games AND standings — scoring now happens immediately as
       // part of entering the result (see scoreGameImmediately in
       // firebase-utils.ts), not via a separate manual step.
-      setGames(await loadGamesWithCounts(leagueId, currentWeek));
+      const refreshed = await loadGamesWithCounts(leagueId, currentWeek);
+      setGames(refreshed);
+      const savedWinner = refreshed.find((g) => g.id === gameId)?.result?.winner;
+      if (savedWinner !== winner) {
+        throw new Error(
+          `Clicked ${winner}, but the saved result is ${savedWinner || "blank"}.`
+        );
+      }
       const leagueData = await firebaseUtils.getLeague(leagueId);
       const standingsData = await firebaseUtils.getStandings(
         leagueId,
@@ -445,6 +452,7 @@ export function LeagueProvider({ children }: { children: React.ReactNode }) {
       setStandings(mergeStandingsWithRoster(standingsData, players));
     } catch (err) {
       setError(`Failed to enter result: ${err}`);
+      throw err;
     } finally {
       setLoading(false);
     }

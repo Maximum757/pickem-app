@@ -2321,6 +2321,8 @@ export function CommissionerDashboard() {
   const [lockingAll, setLockingAll] = useState(false);
   const [lastLockResult, setLastLockResult] = useState<string | null>(null);
   const [editingResultGameId, setEditingResultGameId] = useState<string | null>(null);
+  const [savingResultGameId, setSavingResultGameId] = useState<string | null>(null);
+  const [resultError, setResultError] = useState<string | null>(null);
   const [tiebreakerQ, setTiebreakerQ] = useState("");
   const [tiebreakerAnswerDraft, setTiebreakerAnswerDraft] = useState("");
   const [tiebreakerRule, setTiebreakerRule] = useState<"closest" | "closest_without_going_over">(
@@ -2442,10 +2444,19 @@ export function CommissionerDashboard() {
   };
 
   const handleDeclareWinner = async (gameId: string, winner: string, loser: string) => {
-    // No score entry — contrarian scoring only ever cared about win/loss
-    // (scoreGameImmediately has always passed 0/0 to the engine), so there
-    // was never a real reason to require it here. One click, done.
-    await enterGameResult(gameId, winner, loser, 0, 0);
+    // The team argument is the same string printed on the button. The save
+    // is checked after it reloads: if the stored winner is anything else,
+    // the error stays on this game instead of quietly showing the other side.
+    setSavingResultGameId(gameId);
+    setResultError(null);
+    try {
+      await enterGameResult(gameId, winner, loser, 0, 0);
+      setEditingResultGameId(null);
+    } catch (err) {
+      setResultError(`${err}`);
+    } finally {
+      setSavingResultGameId((current) => (current === gameId ? null : current));
+    }
   };
 
   const handleSetTiebreakerQuestion = async () => {
@@ -2602,6 +2613,10 @@ export function CommissionerDashboard() {
           </span>
         </div>
 
+        {resultError && (
+          <p className="mb-3 text-sm font-semibold text-red-700">{resultError}</p>
+        )}
+
         <div className="space-y-3">
           {games.map((g) => {
             // Was purely `g.isLocked` — but nothing ever flips that field
@@ -2674,44 +2689,34 @@ export function CommissionerDashboard() {
                   )}
                 </div>
                 <div className="flex gap-2">
+                  {[
+                    { team: g.awayTeam, opponent: g.homeTeam },
+                    { team: g.homeTeam, opponent: g.awayTeam },
+                  ].map(({ team, opponent }) => (
+                    <button
+                      key={team}
+                      onClick={() => {
+                        if (!canDeclare || savingResultGameId) return;
+                        handleDeclareWinner(g.id, team, opponent);
+                      }}
+                      disabled={!canDeclare || savingResultGameId === g.id}
+                      className={`flex-1 py-2 px-3 rounded text-sm font-semibold ${
+                        g.result?.winner === team
+                          ? "bg-green-100 border-2 border-green-600"
+                          : canDeclare
+                          ? "bg-gray-100 hover:bg-green-100 hover:border-green-600 border-2 border-transparent cursor-pointer"
+                          : "bg-gray-50 text-gray-400 cursor-not-allowed"
+                      }`}
+                    >
+                      {savingResultGameId === g.id ? "Saving…" : team}
+                    </button>
+                  ))}
                   <button
                     onClick={() => {
-                      canDeclare && handleDeclareWinner(g.id, g.awayTeam, g.homeTeam);
-                      setEditingResultGameId(null);
+                      if (!canDeclare || savingResultGameId) return;
+                      handleDeclareWinner(g.id, TIE_RESULT, TIE_RESULT);
                     }}
-                    disabled={!canDeclare}
-                    className={`flex-1 py-2 px-3 rounded text-sm font-semibold ${
-                      g.result?.winner === g.awayTeam
-                        ? "bg-green-100 border-2 border-green-600"
-                        : canDeclare
-                        ? "bg-gray-100 hover:bg-green-100 hover:border-green-600 border-2 border-transparent cursor-pointer"
-                        : "bg-gray-50 text-gray-400 cursor-not-allowed"
-                    }`}
-                  >
-                    {g.awayTeam}
-                  </button>
-                  <button
-                    onClick={() => {
-                      canDeclare && handleDeclareWinner(g.id, g.homeTeam, g.awayTeam);
-                      setEditingResultGameId(null);
-                    }}
-                    disabled={!canDeclare}
-                    className={`flex-1 py-2 px-3 rounded text-sm font-semibold ${
-                      g.result?.winner === g.homeTeam
-                        ? "bg-green-100 border-2 border-green-600"
-                        : canDeclare
-                        ? "bg-gray-100 hover:bg-green-100 hover:border-green-600 border-2 border-transparent cursor-pointer"
-                        : "bg-gray-50 text-gray-400 cursor-not-allowed"
-                    }`}
-                  >
-                    {g.homeTeam}
-                  </button>
-                  <button
-                    onClick={() => {
-                      canDeclare && handleDeclareWinner(g.id, TIE_RESULT, TIE_RESULT);
-                      setEditingResultGameId(null);
-                    }}
-                    disabled={!canDeclare}
+                    disabled={!canDeclare || savingResultGameId === g.id}
                     title="Tie: nobody gets points for this game"
                     className={`py-2 px-3 rounded text-sm font-semibold ${
                       g.result?.winner === TIE_RESULT

@@ -439,7 +439,14 @@ async function lockPassedGames() {
     const espn = espnByMatch.get(matchKey(g.awayTeam, g.homeTeam));
     if (!espn) continue;
 
-    if (espn.state === "in" && !g.result) {
+    // Re-read immediately before a final is written. This loop holds the
+    // snapshot from the start of the run, so a winner the commissioner
+    // tapped while the job was already going would otherwise be replaced.
+    const freshSnap = await doc.ref.get();
+    const fresh = freshSnap.data();
+    if (!fresh) continue;
+
+    if (espn.state === "in" && !fresh.result) {
       await doc.ref.update({
         isLocked: true,
         live: {
@@ -454,22 +461,26 @@ async function lockPassedGames() {
       continue;
     }
 
-    if (!espn.completed && espn.state !== "post") continue;
+    // `state === "post"` is not enough. A postponed or not-yet-official
+    // game can sit there with a score that is not the final.
+    if (!espn.completed) continue;
 
     const isTie = espn.awayScore === espn.homeScore;
     const homeWon = espn.homeScore > espn.awayScore;
-    const espnWinner = isTie ? TIE : homeWon ? g.homeTeam : g.awayTeam;
-    const espnLoser = isTie ? TIE : homeWon ? g.awayTeam : g.homeTeam;
+    const espnWinner = isTie ? TIE : homeWon ? fresh.homeTeam : fresh.awayTeam;
+    const espnLoser = isTie ? TIE : homeWon ? fresh.awayTeam : fresh.homeTeam;
 
-    if (g.result) {
-      const missingScores = (g.result.winnerScore || 0) === 0 && (g.result.loserScore || 0) === 0;
+    if (fresh.result) {
+      const missingScores = (fresh.result.winnerScore || 0) === 0 && (fresh.result.loserScore || 0) === 0;
       if (!missingScores) continue;
-      const winner = g.result.winner;
+      const winner = fresh.result.winner;
       if (winner === TIE && !isTie) continue;
-      const winnerScore = winner === g.homeTeam ? espn.homeScore : espn.awayScore;
-      const loserScore = winner === g.homeTeam ? espn.awayScore : espn.homeScore;
+      // A tapped winner is kept. Scores come from that team's side of the
+      // scoreboard, so the number under the name is that team's points.
+      const winnerScore = winner === fresh.homeTeam ? espn.homeScore : espn.awayScore;
+      const loserScore = winner === fresh.homeTeam ? espn.awayScore : espn.homeScore;
       console.log(
-        `  Filling score ${g.awayTeam} @ ${g.homeTeam}: ${winner} ${winnerScore}-${loserScore}`
+        `  Filling score ${fresh.awayTeam} @ ${fresh.homeTeam}: ${winner} ${winnerScore}-${loserScore}`
       );
       await doc.ref.update({
         "result.winnerScore": winnerScore,
@@ -485,8 +496,8 @@ async function lockPassedGames() {
 
     console.log(
       isTie
-        ? `  Final ${g.awayTeam} @ ${g.homeTeam}: tie ${winnerScore}-${loserScore}, nobody scores`
-        : `  Final ${g.awayTeam} @ ${g.homeTeam}: ${espnWinner} ${winnerScore}-${loserScore}`
+        ? `  Final ${fresh.awayTeam} @ ${fresh.homeTeam}: tie ${winnerScore}-${loserScore}, nobody scores`
+        : `  Final ${fresh.awayTeam} @ ${fresh.homeTeam}: ${espnWinner} ${winnerScore}-${loserScore}`
     );
     if (isTie) tiesEntered++;
     await doc.ref.update({
