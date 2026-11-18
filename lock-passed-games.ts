@@ -14,9 +14,9 @@
  * Ties are a wash: the result is saved with winner/loser "TIE", so no pick
  * matches and nobody gets points for that game.
  *
- * A finished scoreboard is the check on a tapped winner. If the tap does
- * not match the final, this replaces it and re-scores. "Wrong? Fix it"
- * sets manualOverride so that one sticks when the scoreboard itself is off.
+ * A tap logs the winner early so this job does not have to poll all day.
+ * Once ESPN marks the game complete, a tap that names the wrong team is
+ * replaced and the game is re-scored.
  *
  * Run:
  *   npm run lock:passed-games
@@ -220,7 +220,6 @@ async function correctStoredWinner(
     "result.loserScore": loserScore,
     "result.resultEnteredAt": Timestamp.now(),
     "result.resultEnteredBy": ESPN_ENTERED_BY,
-    "result.manualOverride": false,
     live: FieldValue.delete(),
   });
 
@@ -574,8 +573,7 @@ async function lockPassedGames() {
 
     if (fresh.result) {
       const winner = fresh.result.winner as string;
-      const override = fresh.result.manualOverride === true;
-      if (!override && winner !== espnWinner) {
+      if (winner !== espnWinner) {
         console.log(
           `  Correcting ${fresh.awayTeam} @ ${fresh.homeTeam}: saved ${winner}, scoreboard ${espnWinner}`
         );

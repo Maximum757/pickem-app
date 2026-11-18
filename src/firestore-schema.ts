@@ -164,8 +164,6 @@ export interface GameDoc {
     loserScore: number;
     resultEnteredAt: Timestamp;
     resultEnteredBy: string; // Commissioner ID, or "espn-scoreboard"
-    // Set by "Wrong? Fix it". The scoreboard job will not replace this winner.
-    manualOverride?: boolean;
   };
 }
 

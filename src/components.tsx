@@ -2443,19 +2443,14 @@ export function CommissionerDashboard() {
     setTimeout(() => setCopiedKey(null), 1500);
   };
 
-  const handleDeclareWinner = async (
-    gameId: string,
-    winner: string,
-    loser: string,
-    manualOverride: boolean
-  ) => {
+  const handleDeclareWinner = async (gameId: string, winner: string, loser: string) => {
     // The team argument is the same string printed on the button. The save
     // is checked after it reloads: if the stored winner is anything else,
     // the error stays on this game instead of quietly showing the other side.
     setSavingResultGameId(gameId);
     setResultError(null);
     try {
-      await enterGameResult(gameId, winner, loser, 0, 0, manualOverride);
+      await enterGameResult(gameId, winner, loser, 0, 0);
       setEditingResultGameId(null);
     } catch (err) {
       setResultError(`${err}`);
@@ -2591,9 +2586,9 @@ export function CommissionerDashboard() {
       <div className="mb-8 border p-4 rounded bg-blue-50">
         <h3 className="text-lg font-bold mb-1">Enter Game Results</h3>
         <p className="text-sm text-gray-600 mb-4">
-          Tap the winning team. When the scoreboard has a final, it replaces a
-          tap that doesn't match. Wrong? Fix it is the one that sticks, for
-          when the scoreboard itself is off.
+          Tap the winning team so the result is logged without a constant
+          scoreboard check. If the tap is the wrong team, the next check
+          replaces it with the final.
         </p>
 
         <div className="mb-4 flex items-center gap-2">
@@ -2701,7 +2696,7 @@ export function CommissionerDashboard() {
                       key={team}
                       onClick={() => {
                         if (!canDeclare || savingResultGameId) return;
-                        handleDeclareWinner(g.id, team, opponent, !!g.result);
+                        handleDeclareWinner(g.id, team, opponent);
                       }}
                       disabled={!canDeclare || savingResultGameId === g.id}
                       className={`flex-1 py-2 px-3 rounded text-sm font-semibold ${
@@ -2718,7 +2713,7 @@ export function CommissionerDashboard() {
                   <button
                     onClick={() => {
                       if (!canDeclare || savingResultGameId) return;
-                      handleDeclareWinner(g.id, TIE_RESULT, TIE_RESULT, !!g.result);
+                      handleDeclareWinner(g.id, TIE_RESULT, TIE_RESULT);
                     }}
                     disabled={!canDeclare || savingResultGameId === g.id}
                     title="Tie: nobody gets points for this game"

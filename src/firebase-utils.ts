@@ -664,8 +664,7 @@ export async function enterGameResult(
   winnerScore: number,
   loserScore: number,
   commissionerId: string,
-  playoffMultiplier: number = 1,
-  manualOverride: boolean = false
+  playoffMultiplier: number = 1
 ): Promise<void> {
   const gameRef = doc(db, `leagues/${leagueId}/games`, gameId);
   await updateDoc(gameRef, {
@@ -675,9 +674,6 @@ export async function enterGameResult(
     "result.loserScore": loserScore,
     "result.resultEnteredAt": Timestamp.now(),
     "result.resultEnteredBy": commissionerId,
-    // Set only from "Wrong? Fix it". A first tap stays checkable, so the
-    // scoreboard job can replace it when the final disagrees.
-    "result.manualOverride": manualOverride,
     isLocked: true,
   });
   // A result implies the game is over, so this is also a safe point to
