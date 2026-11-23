@@ -8,7 +8,7 @@ import { useAuth } from "./AuthContext";
 import { getTeamColor, getTeamDisplayName, getTeamLogoUrl, TEAM_FULL_NAMES } from "./teamColors";
 import * as firebaseUtils from "./firebase-utils";
 import * as schema from "./firestore-schema";
-import { defaultRecapWeek, effectiveLockTime, isPastLock, primetimeGames } from "./lockTime";
+import { defaultRecapWeek, effectiveLockTime, isPastLock, picksRevealed, primetimeGames } from "./lockTime";
 
 // Shared kickoff-time formatter — every place a game's time gets displayed
 // uses this, so they can't drift out of sync with each other. Explicit
@@ -1098,6 +1098,8 @@ function WeekWinnerMatrix({
   picks,
   players,
   guessByPlayer,
+  snfPicksIn,
+  mnfPicksIn,
 }: {
   snf: schema.UIGame;
   mnf: schema.UIGame;
@@ -1105,6 +1107,8 @@ function WeekWinnerMatrix({
   picks: schema.PickDoc[];
   players: schema.PlayerDoc[];
   guessByPlayer: Record<string, number>;
+  snfPicksIn: boolean;
+  mnfPicksIn: boolean;
 }) {
   const picksByGame = new Map<string, schema.PickDoc[]>();
   picks.forEach((p) => {
@@ -1204,6 +1208,7 @@ function WeekWinnerMatrix({
               const tied = cell.leaders.length > 1;
               const irrelevant = columnIrrelevant(snfTeam);
               const decided = snfWinner === snfTeam && mnf.result?.winner === mnfTeam;
+              const picksHidden = !snfPicksIn || !mnfPicksIn;
               return (
                 <div
                   key={snfTeam}
@@ -1212,7 +1217,9 @@ function WeekWinnerMatrix({
                   }`}
                 >
                   <div className="flex flex-col items-center">
-                    {cell.points > 0 ? (
+                    {picksHidden ? (
+                      <div className="text-sm text-gray-400">—</div>
+                    ) : cell.points > 0 ? (
                       <>
                         <div className={`text-[10px] mb-1 ${irrelevant ? "text-gray-400" : "text-gray-500"}`}>
                           {cell.points} pts{tied ? " · tie" : ""}
@@ -1243,7 +1250,16 @@ function WeekWinnerMatrix({
           </React.Fragment>
         ))}
       </div>
-      {othersStillOpen && (
+      {(!snfPicksIn || !mnfPicksIn) && (
+        <p className="px-3 py-1.5 text-[10px] text-gray-500 border-t">
+          {[!snfPicksIn ? "Sunday night" : null, !mnfPicksIn ? "Monday night" : null]
+            .filter(Boolean)
+            .join(" and ")}{" "}
+          {(!snfPicksIn ? 1 : 0) + (!mnfPicksIn ? 1 : 0) === 1 ? "hasn't" : "haven't"} locked, so those
+          picks aren't in this yet.
+        </p>
+      )}
+      {othersStillOpen && snfPicksIn && mnfPicksIn && (
         <p className="px-3 py-1.5 text-[10px] text-gray-500 border-t">
           Games still in progress aren't counted yet, so these names can change as the rest of the slate finishes.
         </p>
@@ -1480,8 +1496,9 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
     .filter((g) => {
       if (g.result) return false;
       if (includeUnlocked) return true;
-      const pastKickoff = isPastLock(g, games, now);
-      return g.isLocked || g.isManuallyLocked || pastKickoff;
+      // A future game stays off this list until it is marked locked or its
+      // own kickoff passes. Otherwise the pick counts give the game away.
+      return picksRevealed(g, now);
     })
     .sort((a, b) => a.order - b.order);
   // Commissioner can also flip games that already have a result. That choice
@@ -1673,6 +1690,8 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
             picks={picks}
             players={players}
             guessByPlayer={guessByPlayer}
+            snfPicksIn={picksRevealed(snf, now)}
+            mnfPicksIn={picksRevealed(mnf, now)}
           />
         )}
         <div className="grid grid-cols-[auto_20rem_auto] gap-3 items-start w-max max-w-full">

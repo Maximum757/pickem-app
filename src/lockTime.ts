@@ -27,6 +27,21 @@ export function isPastLock(game: TimedGame, weekGames: TimedGame[], now: Date): 
   return !!lockAt && lockAt <= now;
 }
 
+type RevealableGame = TimedGame & {
+  isLocked?: boolean;
+  isManuallyLocked?: boolean;
+  result?: unknown;
+};
+
+// Other people's picks stay hidden until this game is actually locked or its
+// own kickoff has passed. A Monday game that is only "due" to lock at Sunday
+// night, but was never marked locked, is still a future game.
+export function picksRevealed(game: RevealableGame, now: Date): boolean {
+  if (game.isLocked || game.isManuallyLocked || game.result) return true;
+  if (game.timeTBD || !game.gameTime) return false;
+  return game.gameTime.getTime() <= now.getTime();
+}
+
 type LockableGame = TimedGame & { isLocked?: boolean; isManuallyLocked?: boolean };
 
 /**
