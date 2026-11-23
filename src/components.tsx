@@ -1186,14 +1186,14 @@ function WeekWinnerMatrix({
   };
 
   return (
-    <div className="mt-3 border rounded bg-white overflow-hidden w-full flex-1 flex flex-col min-h-0">
-      <div className="bg-gray-100 px-3 py-1.5 text-xs font-bold shrink-0">
+    <div className="mb-4 border rounded bg-white overflow-hidden w-full max-w-2xl">
+      <div className="bg-gray-100 px-3 py-1.5 text-xs font-bold">
         Who wins the week
       </div>
-      <p className="px-3 pt-2 pb-1 text-[10px] text-gray-500 shrink-0">
+      <p className="px-3 pt-2 pb-1 text-[10px] text-gray-500">
         Sunday night across the top, Monday night down the side.
       </p>
-      <div className="flex-1 grid grid-cols-[2.75rem_1fr_1fr] grid-rows-[auto_1fr_1fr] min-h-0">
+      <div className="grid grid-cols-[2.75rem_1fr_1fr]">
         <div />
         {snfTeams.map((team) => headerTeam(team, snfWinner, columnIrrelevant(team)))}
         {mnfTeams.map((mnfTeam) => (
@@ -1319,6 +1319,7 @@ function WhoCanStillWin({
   ways,
   gamesStillHidden,
   answerKnown,
+  questionSet,
   viewerId,
 }: {
   players: schema.PlayerDoc[];
@@ -1327,6 +1328,7 @@ function WhoCanStillWin({
   ways: number;
   gamesStillHidden: number;
   answerKnown: boolean;
+  questionSet: boolean;
   viewerId: string | null;
 }) {
   const living = players.filter((p) => alive.has(p.id));
@@ -1384,7 +1386,9 @@ function WhoCanStillWin({
           <p className="text-xs text-gray-400 mt-2">
             {answerKnown
               ? "The tiebreaker answer is in, so a tie for the lead goes to the closest guess."
-              : "A tie for the lead still counts. The tiebreaker isn't in yet."}
+              : questionSet
+                ? "A tie for the lead still counts. The tiebreaker answer isn't in yet."
+                : "A tie for the lead still counts. No tiebreaker question is set for this week."}
           </p>
         )}
       </div>
@@ -1404,6 +1408,7 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
     league,
     loading,
     isCommissioner,
+    tiebreakerQuestion,
     tiebreakerAnswer,
     tiebreakerRule,
   } = useLeague();
@@ -1657,8 +1662,19 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
           ways={stillInIt.ways}
           gamesStillHidden={gamesStillHidden}
           answerKnown={tiebreakerAnswer !== null && !!tiebreakerRule}
+          questionSet={!!tiebreakerQuestion}
           viewerId={playerId}
         />
+        {showWeekMatrix && snf && mnf && (
+          <WeekWinnerMatrix
+            snf={snf}
+            mnf={mnf}
+            games={games}
+            picks={picks}
+            players={players}
+            guessByPlayer={guessByPlayer}
+          />
+        )}
         <div className="grid grid-cols-[auto_20rem_auto] gap-3 items-start w-max max-w-full">
           <WhatIfTable
             title={`Week ${currentWeek}`}
@@ -1668,8 +1684,7 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
             onFollow={followPlayer}
           />
 
-          <div className={showWeekMatrix ? "self-stretch flex flex-col" : ""}>
-          <div className="border rounded bg-white overflow-hidden shrink-0">
+          <div className="border rounded bg-white overflow-hidden">
             <div className="bg-gray-100 px-2 py-1.5 text-xs font-bold flex items-center justify-between">
               <span>{includeUnlocked ? "All games" : "Locked games"}</span>
               {pickedCount > 0 && (
@@ -1709,7 +1724,9 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
                     </div>
                     <div className="flex gap-1.5">
                       {[g.awayTeam, g.homeTeam].map((team) => {
-                        const selected = chosen[g.id] === team;
+                        const actualWinner =
+                          g.result && g.result.winner !== "TIE" ? g.result.winner : undefined;
+                        const selected = (chosen[g.id] || actualWinner) === team;
                         const colors = getTeamColor(team);
                         return (
                           <button
@@ -1742,17 +1759,6 @@ export function WhatIfScreen({ includeUnlocked = false }: { includeUnlocked?: bo
                 ))}
               </div>
             )}
-          </div>
-          {showWeekMatrix && snf && mnf && (
-            <WeekWinnerMatrix
-              snf={snf}
-              mnf={mnf}
-              games={games}
-              picks={picks}
-              players={players}
-              guessByPlayer={guessByPlayer}
-            />
-          )}
           </div>
 
           <WhatIfTable
